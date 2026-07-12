@@ -48,6 +48,43 @@ ROOT = "/media/user/2tb/motion_data/HUMANISE"
 ACTIONS = natsorted(["walk", "sit", "stand up", "lie"])
 ANCHOR_FRAME = {"sit": -1, "stand up": 0, "walk": -1, "lie": -1}
 
+# Locomotion filter (STEP2 Task 3 / CLAUDE.md MVP scope): keep walk / stand
+# ("stand up" is HUMANISE's own action-zip name for this category -- there is
+# no separate "turn" action in HUMANISE's 4-way taxonomy {lie, sit, stand up,
+# walk}; turning happens within "walk" clips and is not separately labeled).
+# Drop sit / lie -- the frozen VQ-VAE reconstructs these poorly (STEP1b canary:
+# sit 2.1x H3D-baseline MPJPE, lie 5.1x + visually broken). See CLAUDE.md's
+# MVP-scope patch and STEP1_REPORT.md's STEP1b Task 2 section for the evidence.
+LOCOMOTION_ACTIONS = frozenset({"walk", "stand up"})
+NON_LOCOMOTION_ACTIONS = frozenset({"sit", "lie"})
+
+
+def is_locomotion(record_or_action) -> bool:
+    """Accepts a ClipRecord or a raw action string."""
+    action = record_or_action.action if hasattr(record_or_action, "action") else record_or_action
+    return action in LOCOMOTION_ACTIONS
+
+
+def locomotion_filter():
+    """Runs the locomotion filter over every clip in the full ID-join.
+
+    Returns (kept_indices, breakdown) where breakdown is a dict
+    {action_name: count} over ALL clips (not just kept ones), plus the two
+    aggregate keys 'locomotion_total' and 'dropped_total'.
+    """
+    flat = build_flat_join()
+    breakdown = {a: 0 for a in ACTIONS}
+    kept = []
+    for i, p in enumerate(flat):
+        action = p["action"]
+        breakdown[action] = breakdown.get(action, 0) + 1
+        if action in LOCOMOTION_ACTIONS:
+            kept.append(i)
+    breakdown["locomotion_total"] = sum(breakdown[a] for a in LOCOMOTION_ACTIONS)
+    breakdown["dropped_total"] = sum(breakdown[a] for a in NON_LOCOMOTION_ACTIONS)
+    breakdown["all_total"] = len(flat)
+    return kept, breakdown
+
 # joint indices within the 22-joint SMPL order (see motion_features.py)
 J_PELVIS, J_LHIP, J_RHIP, J_LSHOULDER, J_RSHOULDER = 0, 1, 2, 16, 17
 
