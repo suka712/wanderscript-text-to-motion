@@ -36,6 +36,12 @@ Differentiated from:
     is added here.
 - **DINOv2** (frozen) — encodes BEV RGB → patch features for scene conditioning.
 - **T5** (frozen) — text encoder (already in T2M-GPT).
+- **VQ-VAE frozen — hardened, not just an initial choice (confirmed STEP1b):** the
+  lie/sit reconstruction break (see MVP scope below) is a codebook-coverage limit, not
+  a decoder-weights problem. Decoder-only finetuning can't fix it; fixing it would need
+  an encoder+codebook+decoder retrain, which discards the "reuse T2M-GPT tokens" core
+  of the design. Since navigation doesn't need those motions, VQ-VAE stays frozen.
+  Revisit only if V2 requires scene interaction (sitting, lying).
 - **Start position (x, y, yaw)** — anchoring frame for the SE(2) rollout AND a
   conditioning input to the transformer.
 - **Token chaining** — end pose of segment k → start pose of segment k+1.
@@ -68,6 +74,11 @@ Conventions:
   embedding the transformer may ignore (it will ignore it — canonicalized targets
   carry no gradient toward absolute position).
 
+**Axis convention (verified in STEP1b):** World frame = ScanNet **Z-up**. Yaw = rotation
+about world Z. HUMANISE raw joint data is natively Z-up — no Y-up→Z-up conversion is
+needed or should be reintroduced. (A `scene_translation` offset in the placement
+transform was found missing during STEP1b validation and fixed — keep it.)
+
 ---
 
 ## BEV rendering — two aligned rasters
@@ -93,9 +104,24 @@ re-rank. Training-free. Touches nothing frozen.
 
 ---
 
+## MVP scope — locomotion only (STEP1b finding)
+The frozen T2M-GPT VQ-VAE reconstructs HUMANISE motions unevenly:
+- walk ~112mm (≈ H3D baseline, fine)
+- stand-up ~192mm (1.4x)
+- sit ~293mm (2.1x)
+- lie ~703mm (5.1x, structurally broken)
+
+This is a codebook-coverage limit: HumanML3D's discrete codes don't span supine/seated
+poses. The MVP application is **indoor robot navigation** — walk / turn / stand / stop.
+Sit and lie are NOT needed for navigation.
+
+Decision: **MVP HUMANISE training is filtered to locomotion (walk/stand/turn).**
+Sit/lie are a documented limitation → **V2**, alongside heightmap conditioning.
+
 ## Data — `/media/user/2tb/motion_data/`
 - **HUMANISE** — scene-grounded (ScanNet scenes) + text. SMPL-X. Must be converted to
-  HumanML3D 263-dim for the frozen VQ-VAE. Primary scene-aware training set.
+  HumanML3D 263-dim for the frozen VQ-VAE. Primary scene-aware training set. **Filtered
+  to locomotion (walk/stand/turn) for MVP training — see MVP scope above.**
 - **HumanML3D** — 14.6K sequences, rich text, no scene. For baseline repro.
 - **ScanNet meshes** — BEV rendering (RGB + occupancy).
 - Preprocessing stats already computed — verify contents, don't assume.
