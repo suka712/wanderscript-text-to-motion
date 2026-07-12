@@ -1,0 +1,29 @@
+# Data, checkpoints, and rendered artifacts stay out of git -- this repo
+# tracks code, scripts, and docs only. All real data/checkpoints live under
+# /media/user/2tb/motion_data and /home/user/Khiem-ssh/T2M-GPT (outside this
+# repo) or in scratch_outputs/ (gitignored below).
+
+# Rendered/scratch outputs (overlay images, canary renders, etc.)
+scratch_outputs/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+
+# Data / checkpoints / large binaries (should never live in this repo anyway)
+*.pth
+*.pt
+*.ckpt
+*.npy
+*.npz
+*.pkl
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Editors / OS
+.DS_Store
