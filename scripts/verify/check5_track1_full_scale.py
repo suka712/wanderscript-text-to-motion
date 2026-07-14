@@ -11,7 +11,7 @@ HUMANISE/contact_motion/motions/*.npy (19,648 files) and logs:
     after its internal off-by-one slicing, we use 3 as a safety margin)
 
 This is the "confirm the adapter doesn't silently poison a subset of the
-dataset" check called for in STEP1b_extend.md Task 1 -- joint order and axis
+dataset" check (see docs/STEP1_plumbing.md) -- joint order and axis
 convention were already confirmed on samples (see src/motion_features.py
 docstring); this check is about coverage, not correctness-in-principle.
 """

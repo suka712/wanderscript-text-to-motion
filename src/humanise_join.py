@@ -25,10 +25,10 @@ z~0.05). HUMANISE's own alignment code rotates about axis=[0,0,1] (Z) and
 recenters only the XY (indices 0,1) components of the pelvis -- consistent
 with Z already being up in the pre-placement frame. So Track 2's rigid
 transform is applied entirely within this native Z-up frame; there is NO
-separate Y-up-to-Z-up rotation to insert (that assumption in
-STEP1b_extend.md's "LOCKED DECISION" section does not hold for HUMANISE's raw
-data -- see STEP1b report for the full evidence trail). This is exactly the
-kind of thing Task 3's floor-overlay check is designed to catch if wrong.
+separate Y-up-to-Z-up rotation to insert (an earlier assumption to the contrary
+did not hold for HUMANISE's raw data -- see docs/STEP1_plumbing.md for the full
+evidence trail). This is exactly the kind of thing the floor-overlay check
+(scripts/verify/check8_track2_overlay.py) is designed to catch if wrong.
 
 Yaw is derived from joint geometry (hip/shoulder cross product, mirroring
 HumanML3D's own face-direction formula, adapted to a Z-up world) rather than
@@ -48,13 +48,15 @@ ROOT = "/media/user/2tb/motion_data/HUMANISE"
 ACTIONS = natsorted(["walk", "sit", "stand up", "lie"])
 ANCHOR_FRAME = {"sit": -1, "stand up": 0, "walk": -1, "lie": -1}
 
-# Locomotion filter (STEP2 Task 3 / CLAUDE.md MVP scope): keep walk / stand
-# ("stand up" is HUMANISE's own action-zip name for this category -- there is
-# no separate "turn" action in HUMANISE's 4-way taxonomy {lie, sit, stand up,
-# walk}; turning happens within "walk" clips and is not separately labeled).
-# Drop sit / lie -- the frozen VQ-VAE reconstructs these poorly (STEP1b canary:
-# sit 2.1x H3D-baseline MPJPE, lie 5.1x + visually broken). See CLAUDE.md's
-# MVP-scope patch and STEP1_REPORT.md's STEP1b Task 2 section for the evidence.
+# Locomotion filter, built for STEP2 Task 3 under a since-reversed "locomotion-only
+# MVP" decision -- the project now targets full interaction (sit/lie/reach), so this
+# is no longer the planned training-data cut. Kept for reference / possible
+# locomotion-only ablations. ("stand up" is HUMANISE's own action-zip name for this
+# category -- there is no separate "turn" action in HUMANISE's 4-way taxonomy {lie,
+# sit, stand up, walk}; turning happens within "walk" clips, not separately labeled.)
+# See docs/STEP1_plumbing.md and docs/STEP2_baseline_calibration.md for the
+# reconstruction numbers (sit 2.1x, lie 5.1x H3D-baseline MPJPE) that originally
+# motivated this filter.
 LOCOMOTION_ACTIONS = frozenset({"walk", "stand up"})
 NON_LOCOMOTION_ACTIONS = frozenset({"sit", "lie"})
 

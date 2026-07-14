@@ -4,10 +4,10 @@ Thin adapter around the ORIGINAL HumanML3D forward feature-extraction pipeline
 joint positions into the 263-dim HumanML3D representation the frozen T2M-GPT
 VQ-VAE was trained on.
 
-Per STEP1b_extend.md: "Do NOT hand-write the 263 feature math. Reuse HumanML3D's
-own motion_representation extraction code." This module does NOT reimplement
-that math -- it imports it unmodified from a vendored clone found on this
-machine (motion-diffusion-model), and only adds:
+Per docs/STEP1_plumbing.md: "Do NOT hand-write the 263 feature math. Reuse
+HumanML3D's own motion_representation extraction code." This module does NOT
+reimplement that math -- it imports it unmodified from a vendored clone found
+on this machine (motion-diffusion-model), and only adds:
   1. A thin joint-order / axis adapter for HUMANISE's (T, 22, 3) tensors.
   2. Global-state plumbing that process_file() expects (it reads several
      module-level globals -- tgt_offsets, face_joint_indx, fid_r, fid_l,
@@ -20,7 +20,7 @@ T2M-GPT's own utils/paramUtil.py which only ships the *inverse* functions):
     /home/user/jered/T2M_test/motion-diffusion-model/data_loaders/humanml/utils/paramUtil.py
     /home/user/jered/T2M_test/motion-diffusion-model/data_loaders/humanml/common/skeleton.py
 
-Joint order confirmation (see STEP1b report): HUMANISE's contact_motion/motions
+Joint order confirmation (see docs/STEP1_plumbing.md): HUMANISE's contact_motion/motions
 22-joint order (from smplkit's SMPL-X joint truncation, used by
 prepare/smplx_to_vec.py in the afford-motion / HUMANISE data-prep repos) is
 index-for-index identical to HumanML3D/T2M-GPT's t2m_kinematic_chain SMPL joint
@@ -29,8 +29,8 @@ left_ankle, right_ankle, spine3, left_foot, right_foot, neck, left_collar,
 right_collar, head, left_shoulder, right_shoulder, left_elbow, right_elbow,
 left_wrist, right_wrist). NO joint reindexing is needed -- MATCH confirmed.
 
-Axis convention finding (load-bearing, revises the a-priori Y-up assumption in
-CLAUDE.md / STEP1b_extend.md): empirical inspection of HUMANISE's own joint
+Axis convention finding (load-bearing, revises an earlier a-priori Y-up
+assumption): empirical inspection of HUMANISE's own joint
 tensors (both contact_motion/motions/*.npy and the raw pure_motion
 joints_traj) shows column index 2 (not index 1) is anatomically "up" --  e.g.
 for a walking clip, head sits at z~1.53, feet at z~0.05, with columns 0 and 1

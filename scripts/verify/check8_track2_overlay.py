@@ -2,7 +2,7 @@
 """
 Task 3 -- Validate Track 2 (world-frame root trajectory) by overlaying
 reconstructed trajectories on their scene's ScanNet mesh. This IS the
-Y-up/Z-up axis-convention correctness test called for in STEP1b_extend.md:
+Y-up/Z-up axis-convention correctness test (see docs/STEP1_plumbing.md):
 if the axis handling in src/humanise_join.py were wrong, trajectories would
 float above or sink below the floor, or land outside the room's footprint.
 
