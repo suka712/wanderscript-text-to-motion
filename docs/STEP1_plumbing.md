@@ -79,10 +79,35 @@ This result has since been reinterpreted (see CLAUDE.md): it is now the reason t
 VQ-VAE gets jointly finetuned on HumanML3D + HUMANISE rather than a reason to scope
 sit/lie out of the project.
 
-**4. BEV meshes — present, renderer not yet built.**
+**4. BEV meshes — present; renderer built and validated (done opportunistically
+while GPU-blocked on Step 2).**
 All 643 HUMANISE scene IDs have a matching ScanNet `_vh_clean_2.ply` mesh
 (`scripts/verify/check4_mesh_check.py`), all load via `trimesh`, Z-up, floor near
-z≈0. No BEV/occupancy renderer exists yet — that's future work (build order item 8).
+z≈0.
+
+Renderer: `src/bev_render.py`, using `pyrender` for the RGB pass (headless via EGL —
+confirmed working through the NVIDIA driver's `libEGL`, no display needed) and direct
+matplotlib triangle rasterization for occupancy (not the GL depth buffer — pyrender's
+orthographic depth had unusable metric precision on this scene scale; rasterizing the
+mesh's own height-sliced triangles is exact and sidesteps it entirely). Both rasters
+share one square world-frame extent and pixel resolution, so they are pixel-aligned by
+construction.
+
+- RGB: top-down photographic render with geometry above 2m clipped (so the camera
+  sees floor/furniture, not the ceiling it would otherwise be looking at).
+- Occupancy: floor-level triangles (≤0.12m above the scene floor) mark walkable area;
+  triangles between 0.12m and 2m mark occupied obstacles, drawn on top. Anything
+  outside the room's footprint or a scan hole defaults to occupied (safe default).
+- World→pixel mapping: `col = (x-xmin)/(xmax-xmin)*W`, `row = (ymax-y)/(ymax-ymin)*H`.
+  Verified empirically (not just derived): a marker placed at a known world position
+  lands within **0.67px** of the formula's prediction, consistently across scenes
+  (`scripts/verify/check11_bev_render.py`).
+- Batch-tested across 33 scenes (every 20th, sorted): **0/33 failures**, ~0.8s/scene,
+  occupied-area fraction 11–41% (mean ~22%) — a plausible range for room scans with
+  furniture concentrated along walls.
+- Visual spot-check: occupancy correctly hugs walls and furniture footprints (bed,
+  couches) while leaving open floor clear — see composite overlays in
+  `scratch_outputs/bev/` (gitignored, regenerate via check11).
 
 ## Verdict
 
