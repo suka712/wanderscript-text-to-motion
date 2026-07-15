@@ -42,39 +42,47 @@ HUMANISE clips:
 | lie | 2,343 | no |
 | **locomotion total** | **11,727 / 19,648 (59.7%)** | |
 
-**Task 2 — partial.** Found and fixed the 2 NaN-corrupted HumanML3D files (see Step
-1 doc). A reconstruction-FID run was started (`VQ_eval.py`, repeat-averaged) but was
-never carried to a final number — see blocker below. Three H3D walk reconstructions
-were rendered for visual sanity (`scripts/verify/check10_h3d_walk_renders.py`),
-MPJPE in the 50–340mm range depending on clip complexity, consistent with Step 1's
-baseline.
+**Task 2 — done.** Found and fixed the 2 NaN-corrupted HumanML3D files (see Step 1
+doc). Three H3D walk reconstructions were rendered for visual sanity
+(`scripts/verify/check10_h3d_walk_renders.py`), MPJPE in the 50–340mm range depending
+on clip complexity, consistent with Step 1's baseline.
 
-Reference numbers pulled from the T2M-GPT paper (arXiv, Table 1 + Table 3,
-HumanML3D, τ=0.5 config matching the downloaded `VQTransformer_corruption05`
-checkpoint) to compare against once eval numbers land:
+Reconstruction-FID run (`VQ_eval.py`, `repeat_time` reduced from the paper's 20 to 3
+for the same shared-GPU reason as Task 1 — see below; finished cleanly in ~4.5 min
+despite the contention, since VQ-only encode/decode is much lighter than AR
+generation):
 
-| Metric | Paper |
-|---|---|
-| Reconstruction FID | 0.070 ± .001 |
-| Generation FID | 0.116 ± .004 |
-| R@1 | 0.491 ± .001 |
-| R@2 | 0.680 ± .003 |
-| R@3 | 0.775 ± .002 |
+| Metric | Ours (3 repeats) | Paper |
+|---|---|---|
+| Reconstruction FID | **0.066 ± .001** | 0.070 ± .001 |
+| Diversity | 9.740 ± .074 | — |
+| R@1 | 0.496 ± .008 | 0.491 ± .001 |
+| R@2 | 0.692 ± .003 | 0.680 ± .003 |
+| R@3 | 0.787 ± .003 | 0.775 ± .002 |
+| Matching score | 3.063 ± .011 | — |
 
-**Task 1 — not completed. Blocked on shared-GPU contention, not a design issue.**
-Two attempts (`GPT_eval_multi.py`, first at the paper's 20 repeats, then reduced to
-3 — the script now has `repeat_time = 3` hardcoded with a comment explaining the
-reduction) both stalled for hours at 100% GPU utilization with zero log progress,
-traced to another process (~16–19GB) sharing the same 4090. Both attempts were
+**Verdict: recon FID matches the paper within reproduction variance. The harness and
+checkpoint are sound.** This resolves the open question from Step 1: the H3D
+MPJPE=137.3mm figure was a metric-convention difference (MPJPE isn't what the paper
+reports; FID is), not a harness problem. STEP1b's sit/lie MPJPE figures stand as
+reported.
+
+**Task 1 — not yet completed. Blocked on shared-GPU contention, not a design issue.**
+Two earlier attempts (`GPT_eval_multi.py`, first at the paper's 20 repeats, then
+reduced to 3 — the script has `repeat_time = 3` hardcoded with a comment explaining
+the reduction) both stalled for hours at 100% GPU utilization with zero log
+progress, traced to another process (~16–19GB) sharing the same 4090. Both were
 killed rather than left to run indefinitely. **CLAUDE.md's environment section
-should be treated as needing a correction: the 4090 is not exclusively ours.**
+should be treated as needing a correction: the 4090 is not exclusively ours.** Task
+2's success just now shows the GPU does yield usable cycles for lighter jobs even
+under contention — Task 1 (autoregressive generation, much heavier per sample) may
+still need genuine free time to complete.
 
 ## Next steps
 
-- Confirm GPU availability before retrying (`nvidia-smi --query-compute-apps`).
-- Re-run Task 1 (`GPT_eval_multi.py`, already reduced to 3 repeats,
-  `T2M-GPT/pretrained/` checkpoints already on disk) and Task 2's recon-FID run to a
-  finished number.
-- Write the actual verdict once numbers land: harness trusted (proceed to Step 3) or
-  not (fix before proceeding — do not build the VQ-VAE finetune on an uncalibrated
-  harness).
+- Retry Task 1 (`GPT_eval_multi.py`, already reduced to 3 repeats,
+  `T2M-GPT/pretrained/` checkpoints already on disk) when the GPU allows.
+- Once Task 1 lands: if generation FID/R-precision also land near the paper, Step
+  2's done-criterion is fully met and Step 3 (VQ-VAE joint finetune) is unlocked. If
+  not, investigate before proceeding — do not build Step 3 on an uncalibrated
+  harness.
