@@ -54,8 +54,17 @@ Stage A — **VQ-VAE (motion tokenizer) joint finetune.**
   into a learned codebook) and decodes tokens back to motion. It is the vocabulary of
   motion the rest of the system speaks in.
 - Why finetune (not freeze): the off-the-shelf T2M-GPT VQ-VAE is trained on HumanML3D only
-  and reconstructs HUMANISE interaction poorly (lie ~703mm, structurally broken). A
-  general-motion paper needs interaction, so the codebook must cover it.
+  and reconstructs HUMANISE interaction worse than locomotion. **Corrected number** (the
+  original canary used a normalization mismatched to this checkpoint — same class of bug
+  found and fixed in the Step 2 FID work; re-run with the correct evaluator-consistent
+  normalization): H3D baseline MPJPE 45.3mm; HUMANISE walk 47.9mm (1.06x), stand-up 67.6mm
+  (1.49x), sit 72.6mm (1.60x), **lie 139.8mm (3.09x)**. Lie is still the worst category by
+  a real margin, and a 10-clip visual spot-check found no catastrophic outliers (65-246mm,
+  uniform moderate degradation, not a broken subset) — but "3.09x, moderately worse" is a
+  materially weaker claim than the original "5.1x, structurally broken." A general-motion
+  paper still needs interaction, so the codebook still needs to cover it, but the magnitude
+  of the original justification should not be quoted as-is. See docs/STEP1_plumbing.md
+  Check 3 for the full before/after and the visual evidence.
 - How: finetune jointly on **HumanML3D + HUMANISE**, balanced sampling (HumanML3D 14.6k
   vs HUMANISE 19.6k — weight so neither dominates; HUMANISE-only would cause catastrophic
   forgetting of general motion).
@@ -154,11 +163,19 @@ From completed verification work (STEP1/STEP1b):
   handle them.
 - **Scene meshes:** all 643 HUMANISE ScanNet meshes load fine (trimesh).
 
+- **Reconstruction-FID calibration (STEP2 Task 2):** done. FID 0.066 ± .001 vs paper's
+  0.070 ± .001, R@1-3 all within variance — harness and checkpoint confirmed trustworthy.
+- **Reconstruction canary, corrected normalization:** the frozen VQ-VAE's own checkpoint
+  has a specific expected mean/std (`checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/`)
+  that differs from the raw H3D data-prep `Mean.npy`/`Std.npy` used in the original Step 1
+  canary. Using the wrong one inflates error substantially for BOTH MPJPE and FID (H3D
+  baseline MPJPE alone dropped 137.3mm -> 45.3mm when corrected). See the Stage A note in
+  section 2b above for the corrected per-category numbers.
+
 Still outstanding from STEP2 (blocked on shared-GPU availability, not design):
-- T2M-GPT baseline FID/R-precision reproduction (calibrates the eval harness).
-- Final reconstruction-FID number on HumanML3D.
-Run these when the GPU is free; the baseline confirms the harness before any numbers
-downstream are trusted.
+- T2M-GPT generation FID/R-precision reproduction (Task 1) — three attempts, all stalled/
+  timed out under contention from another user's job on the same GPU (see section 8).
+Run this when the GPU is free; it's the last piece before the harness is fully trusted.
 
 ---
 
@@ -243,6 +260,11 @@ implied.
 - T2M-GPT base code: `/home/user/Khiem-ssh/T2M-GPT/` — kept SEPARATE from the working
   `wander` repo; wander imports/points at it, does not fork it in.
 - Hardware: 4090 (~25 GB) primary, 5090 fallback (likely needed — two training stages).
+  **The 4090 is shared with at least one other user's job, not exclusively ours** —
+  confirmed directly (a GPU eval job stalled for hours at 100% utilization with zero
+  progress, traced to another ~16-19GB process). Check `nvidia-smi --query-compute-apps`
+  before assuming a stalled job is a code problem. Lighter jobs (VQ-VAE-only eval) still
+  get usable cycles under contention; heavier ones (autoregressive generation) may not.
 - Benchmarks: PSMo + AffordMotion (reported HUMANISE numbers; PSMo has no public code, so
   state test-protocol differences honestly). SceMoS is related work only — it reports on
   TRUMANS, a different dataset; no numeric comparison.

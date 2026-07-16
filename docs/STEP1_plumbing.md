@@ -67,7 +67,7 @@ Ran the frozen T2M-GPT VQ-VAE (checkpoint fetched via the repo's own
 `download_model.sh`) encode→decode on both H3D and converted HUMANISE
 (`scripts/verify/check7_vqvae_canary.py`):
 
-| Category | MPJPE | vs. H3D baseline |
+| Category | MPJPE (original) | vs. H3D baseline |
 |---|---|---|
 | H3D baseline (walk-like) | 137.3mm | — |
 | HUMANISE walk | ~112mm | fine |
@@ -75,9 +75,43 @@ Ran the frozen T2M-GPT VQ-VAE (checkpoint fetched via the repo's own
 | HUMANISE sit | ~293mm | 2.1x |
 | HUMANISE lie | ~703mm | 5.1x, visually broken |
 
-This result has since been reinterpreted (see CLAUDE.md): it is now the reason the
+This result has since been reinterpreted (see CLAUDE.md): it was the reason the
 VQ-VAE gets jointly finetuned on HumanML3D + HUMANISE rather than a reason to scope
 sit/lie out of the project.
+
+**Correction (found during STEP2's per-category FID work, `check12`-`check15`):** the
+normalization above (`H3D_ROOT`'s `Mean.npy`/`Std.npy`) is NOT what this VQ-VAE
+checkpoint's own evaluator expects — the checkpoint has its own stats at
+`checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/{mean,std}.npy`, which differ
+enough (max abs diff 0.028 in mean, 0.34 in std) to substantially inflate error. Found
+via a control test: the exact same eval code run on H3D itself gave FID=5.25 with the
+wrong stats and FID=0.072 (matches the paper's 0.070) with the right ones. Re-ran the
+MPJPE canary with the correct stats, all categories (`scripts/verify/check14_mpjpe_evaluator_norm.py`):
+
+| Category | MPJPE (corrected) | vs. H3D baseline |
+|---|---|---|
+| H3D baseline | **45.3mm** (was 137.3mm) | — |
+| HUMANISE walk | 47.9mm | 1.06x |
+| HUMANISE stand-up | 67.6mm | 1.49x |
+| HUMANISE sit | 72.6mm | 1.60x |
+| HUMANISE lie | **139.8mm** (was ~703mm) | **3.09x** (was 5.1x) |
+
+H3D's own baseline dropped 137.3→45.3mm, confirming the normalization mismatch affected
+the *original* canary too, not just the later FID work. Lie is still the worst category
+by a real margin, but "5.1x, structurally broken" was substantially a normalization
+artifact — the corrected picture is "3.09x, moderately worse." A 10-clip visual
+spot-check of `lie` (`scripts/verify/check15_lie_ten_samples.py`) found per-clip MPJPE
+ranging 65-246mm with no catastrophic outliers (mean 135.6mm, std 56mm) — every
+reconstruction preserved the same overall pose family as its real counterpart, with
+moderate joint-angle deviations, not structural breakage. This reads as uniform moderate
+degradation, not a broken subset dragging the average up.
+
+**This matters:** the corrected numbers are a materially weaker version of the
+justification CLAUDE.md originally gave for finetuning the VQ-VAE rather than keeping it
+frozen. The directional finding stands (interaction reconstructs worse than locomotion,
+worst on lie) but the magnitude does not support "structurally broken" as stated. See
+CLAUDE.md section 2b for how this is now worded, and docs/STEP2_baseline_calibration.md
+for the FID side of this same correction.
 
 **4. BEV meshes — present; renderer built and validated (done opportunistically
 while GPU-blocked on Step 2).**
