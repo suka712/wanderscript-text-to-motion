@@ -113,6 +113,26 @@ worst on lie) but the magnitude does not support "structurally broken" as stated
 CLAUDE.md section 2b for how this is now worded, and docs/STEP2_baseline_calibration.md
 for the FID side of this same correction.
 
+**Rendering bug found and fixed (post-hoc, does not change any number above):** the stick-
+figure renderers in `check7`/`check10`/`check13`/`check15` used
+`ax.set_box_aspect([1,1,1])` alone, which only forces the matplotlib 3D plot *box* to be a
+cube — it does not give x/y/z the same data-unit scale. Since each axis autoscaled
+independently to that frame's own min/max, frames with a small depth extent relative to
+height (common — walking depth varies per stride phase, height doesn't) got visibly
+stretched/distorted, even though the underlying joint data was correct. This made the
+"10-clip visual spot-check" renders above look worse than the data actually was — general
+pose direction was always right, but proportions looked wrong in a way that could be
+mistaken for a reconstruction defect. Fixed by computing equal-span xlim/ylim/zlim
+per rendered frame (or per clip, for the video renderer) before applying `set_box_aspect`.
+All four renderers regenerated; the underlying MPJPE numbers in the table above are
+unchanged (confirmed by rerunning `check15`: min/max/mean identical to 65.1-246.2mm,
+mean 135.6mm). Two new renderers were added on top of the fix, using the same
+evaluator-consistent normalization: `check16_all_categories_examples.py` (real-vs-recon
+PNGs for all four action categories, not just lie) and `check17_recon_video.py`
+(full-length real-vs-recon mp4s, one per clip, fixed camera box across the whole clip).
+Outputs in `scratch_outputs/category_examples/` and `scratch_outputs/recon_video/`
+(gitignored, regenerate on demand).
+
 **4. BEV meshes — present; renderer built and validated (done opportunistically
 while GPU-blocked on Step 2).**
 All 643 HUMANISE scene IDs have a matching ScanNet `_vh_clean_2.ply` mesh

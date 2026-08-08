@@ -74,6 +74,13 @@ def render_stick_figure(pos, out_path, title, n_poses=5):
         for chain in kinematic_chain:
             ax.plot(p[chain, 0], p[chain, 2], p[chain, 1], marker="o", markersize=2)
         ax.set_title(f"frame {fi}")
+        # equal data-unit scale on all axes, not just a cubic box (see check7)
+        xs, ys, zs = p[:, 0], p[:, 2], p[:, 1]
+        ctr = np.array([xs.mean(), ys.mean(), zs.mean()])
+        r = max(xs.ptp(), ys.ptp(), zs.ptp(), 1e-6) / 2 * 1.1
+        ax.set_xlim(ctr[0] - r, ctr[0] + r)
+        ax.set_ylim(ctr[1] - r, ctr[1] + r)
+        ax.set_zlim(ctr[2] - r, ctr[2] + r)
         ax.set_box_aspect([1, 1, 1])
     fig.suptitle(title)
     fig.tight_layout()

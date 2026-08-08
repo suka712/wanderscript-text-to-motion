@@ -37,6 +37,7 @@ from vqvae_loader import load_vqvae  # noqa: E402
 
 H3D_ROOT = "/media/user/2tb/motion_data/H3D"
 HUMANISE_MOTIONS = "/media/user/2tb/motion_data/HUMANISE/contact_motion/motions"
+T2M_GPT_ROOT = "/home/user/Khiem-ssh/T2M-GPT"
 OUT_DIR = "/home/user/Khiem-ssh/wander/scratch_outputs/canary"
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -104,6 +105,16 @@ def render_stick_figure(pos, out_path, title, n_poses=5, kinematic_chain=None):
         for chain in kinematic_chain:
             ax.plot(p[chain, 0], p[chain, 2], p[chain, 1], marker="o", markersize=2)
         ax.set_title(f"frame {fi}")
+        # set_box_aspect alone only makes the drawing box a cube -- it does NOT
+        # give x/y/z the same data-unit scale, so unequal per-axis autoscaled
+        # ranges (e.g. small depth extent vs. height) get stretched to fill the
+        # cube and the figure looks anatomically distorted. Force equal spans.
+        xs, ys, zs = p[:, 0], p[:, 2], p[:, 1]
+        ctr = np.array([xs.mean(), ys.mean(), zs.mean()])
+        r = max(xs.ptp(), ys.ptp(), zs.ptp(), 1e-6) / 2 * 1.1
+        ax.set_xlim(ctr[0] - r, ctr[0] + r)
+        ax.set_ylim(ctr[1] - r, ctr[1] + r)
+        ax.set_zlim(ctr[2] - r, ctr[2] + r)
         ax.set_box_aspect([1, 1, 1])
     fig.suptitle(title)
     fig.tight_layout()
@@ -141,7 +152,7 @@ def stage_h3d(net, mean, std):
     render_stick_figure(orig_pos, f"{OUT_DIR}/h3d_{fn}_orig.png", f"H3D {fn} ORIGINAL")
     render_stick_figure(recon_pos, f"{OUT_DIR}/h3d_{fn}_recon.png", f"H3D {fn} VQ-VAE RECON")
     print(f"Rendered sample: {fn} -> {OUT_DIR}/h3d_{fn}_{{orig,recon}}.png")
-    return all_errs
+    return all_errs, fn
 
 
 def stage_humanise(net, mean, std):
@@ -178,7 +189,40 @@ def stage_humanise(net, mean, std):
     render_stick_figure(orig_pos, f"{OUT_DIR}/humanise_{i:05d}_orig.png", f"HUMANISE {i:05d} ORIGINAL")
     render_stick_figure(recon_pos, f"{OUT_DIR}/humanise_{i:05d}_recon.png", f"HUMANISE {i:05d} VQ-VAE RECON")
     print(f"Rendered sample: {i:05d} -> {OUT_DIR}/humanise_{i:05d}_{{orig,recon}}.png")
-    return all_errs
+    return all_errs, i
+
+
+def render_evalnorm_examples(net, h3d_fn, humanise_idx, eval_mean, eval_std):
+    """Re-render the SAME two example clips picked by stage_h3d/stage_humanise,
+    but round-tripped through the VQ-VAE's own checkpoint mean/std (the
+    evaluator-consistent normalization used by check13/14/15) instead of
+    H3D_ROOT's Mean.npy/Std.npy. This stage's printed MPJPE numbers above are
+    intentionally left on the old normalization -- docs/STEP1_plumbing.md and
+    docs/STEP2_baseline_calibration.md cite this script by name as the source
+    of the superseded 137.3mm figure, contrasted against check14's corrected
+    45.3mm. Changing the main stage's norm would break that documented
+    before/after trail. This only adds a second, correctly-normalized render
+    of the same clips so the misleading old-norm image isn't the only visual
+    evidence sitting in scratch_outputs/canary/.
+    """
+    data263 = np.load(f"{H3D_ROOT}/new_joint_vecs/{h3d_fn}").astype(np.float32)
+    result = run_vqvae_roundtrip(net, data263, eval_mean, eval_std)
+    _, _, orig_pos, recon_pos = result
+    render_stick_figure(orig_pos, f"{OUT_DIR}/h3d_{h3d_fn}_orig_evalnorm.png",
+                         f"H3D {h3d_fn} ORIGINAL (evaluator-consistent norm)")
+    render_stick_figure(recon_pos, f"{OUT_DIR}/h3d_{h3d_fn}_recon_evalnorm.png",
+                         f"H3D {h3d_fn} VQ-VAE RECON (evaluator-consistent norm)")
+
+    cm = np.load(f"{HUMANISE_MOTIONS}/{humanise_idx:05d}.npy")
+    data263, _, _, _ = mf.humanise_positions_to_263(cm)
+    result = run_vqvae_roundtrip(net, data263.astype(np.float32), eval_mean, eval_std)
+    _, _, orig_pos, recon_pos = result
+    render_stick_figure(orig_pos, f"{OUT_DIR}/humanise_{humanise_idx:05d}_orig_evalnorm.png",
+                         f"HUMANISE {humanise_idx:05d} ORIGINAL (evaluator-consistent norm)")
+    render_stick_figure(recon_pos, f"{OUT_DIR}/humanise_{humanise_idx:05d}_recon_evalnorm.png",
+                         f"HUMANISE {humanise_idx:05d} VQ-VAE RECON (evaluator-consistent norm)")
+    print(f"Rendered evaluator-consistent-norm samples for {h3d_fn} and {humanise_idx:05d} "
+          f"-> {OUT_DIR}/*_evalnorm.png")
 
 
 if __name__ == "__main__":
@@ -188,8 +232,16 @@ if __name__ == "__main__":
     net = load_vqvae(device=DEVICE)
     print(f"VQ-VAE loaded on {DEVICE}")
 
-    h3d_errs = stage_h3d(net, mean, std)
-    humanise_errs = stage_humanise(net, mean, std)
+    h3d_errs, h3d_example_fn = stage_h3d(net, mean, std)
+    humanise_errs, humanise_example_idx = stage_humanise(net, mean, std)
+
+    eval_mean = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/mean.npy").astype(
+        np.float32
+    )
+    eval_std = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/std.npy").astype(
+        np.float32
+    )
+    render_evalnorm_examples(net, h3d_example_fn, humanise_example_idx, eval_mean, eval_std)
 
     print("=" * 60)
     print("SUMMARY")

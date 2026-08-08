@@ -49,13 +49,24 @@ def render_pair(orig_pos, recon_pos, out_path, title, n_poses=5):
     idxs = np.linspace(0, T - 1, n_poses).astype(int)
 
     fig, axes = plt.subplots(2, n_poses, figsize=(3 * n_poses, 6), subplot_kw={"projection": "3d"})
-    for row, pos, label in [(0, orig_pos, "REAL"), (1, recon_pos, "RECON")]:
-        for col, fi in enumerate(idxs):
+    for col, fi in enumerate(idxs):
+        # shared equal-aspect limits across REAL/RECON at this frame, computed
+        # from their union, so the two rows are visually comparable and
+        # neither is stretched relative to the other (see check7 for why
+        # set_box_aspect alone is not sufficient).
+        both = np.concatenate([orig_pos[fi], recon_pos[fi]], axis=0)
+        xs, ys, zs = both[:, 0], both[:, 2], both[:, 1]
+        ctr = np.array([xs.mean(), ys.mean(), zs.mean()])
+        r = max(xs.ptp(), ys.ptp(), zs.ptp(), 1e-6) / 2 * 1.1
+        for row, pos, label in [(0, orig_pos, "REAL"), (1, recon_pos, "RECON")]:
             ax = axes[row, col]
             p = pos[fi]
             for chain in kinematic_chain:
                 ax.plot(p[chain, 0], p[chain, 2], p[chain, 1], marker="o", markersize=2)
             ax.set_title(f"{label} frame {fi}")
+            ax.set_xlim(ctr[0] - r, ctr[0] + r)
+            ax.set_ylim(ctr[1] - r, ctr[1] + r)
+            ax.set_zlim(ctr[2] - r, ctr[2] + r)
             ax.set_box_aspect([1, 1, 1])
     fig.suptitle(title)
     fig.tight_layout()

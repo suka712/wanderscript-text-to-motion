@@ -89,12 +89,23 @@ def main():
         recon_pos = mf.recover_positions(recon263)
         mid = orig_pos.shape[0] // 2
 
+        # shared equal-aspect limits across REAL/RECON, computed from their
+        # union, so set_box_aspect doesn't distort either relative to the
+        # other (see check7 for why box_aspect alone is not sufficient).
+        both = np.concatenate([orig_pos[mid], recon_pos[mid]], axis=0)
+        xs, ys, zs = both[:, 0], both[:, 2], both[:, 1]
+        ctr = np.array([xs.mean(), ys.mean(), zs.mean()])
+        r = max(xs.ptp(), ys.ptp(), zs.ptp(), 1e-6) / 2 * 1.1
+
         for col, (pos, label) in enumerate([(orig_pos, "REAL"), (recon_pos, "RECON")]):
             ax = axes[row, col]
             p = pos[mid]
             for chain in kinematic_chain:
                 ax.plot(p[chain, 0], p[chain, 2], p[chain, 1], marker="o", markersize=2)
             ax.set_title(f"clip {i:05d} {label}\nMPJPE={e*1000:.0f}mm" if col == 0 else f"{label}")
+            ax.set_xlim(ctr[0] - r, ctr[0] + r)
+            ax.set_ylim(ctr[1] - r, ctr[1] + r)
+            ax.set_zlim(ctr[2] - r, ctr[2] + r)
             ax.set_box_aspect([1, 1, 1])
 
     fig.suptitle("HUMANISE 'lie': 10 random clips, real vs recon (evaluator-consistent norm)")

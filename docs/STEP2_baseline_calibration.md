@@ -115,12 +115,43 @@ jobs (Task 2's VQ-only eval, the per-category FID/MPJPE work above) reliably get
 usable GPU cycles even under this contention; Task 1's autoregressive generation
 loop specifically has not, across four tries.
 
+**Attempts 5 & 6 (this session, 2026-07-29) — root cause found, self-inflicted, not GPU
+contention.** GPU was confirmed idle (0% util) before launch, `repeat_time` already at 1
+(reduced from earlier attempts). Both runs were wrapped in a `timeout 21600` (6h) safety
+net I added as a precaution against another silent multi-day stall. Both died with no
+Python traceback, process just vanishing — same signature as the historical stalls, so
+initially suspected as another instance of the same problem. Investigated via a second
+process's GPU memory (~16GB, present throughout both runs — the same contention pattern
+documented above) and, on the first death, a coincidental timing correlation with an
+AnyDesk/gnome-shell display-reprobe event on the same physical GPU (this box uses one
+4090 for both compute and the local/remote desktop). Neither panned out: `dmesg`/
+`journalctl -k` for the death window showed zero kernel entries (no OOM-killer, no NVRM/
+Xid GPU fault), and `journalctl` generally showed nothing beyond the coincidental
+AnyDesk blip (no session/logind/cgroup teardown, no segfault).
+
+The second retry added a 5-second-granularity local heartbeat log (GPU memory + process
+liveness, independent of system logs) instead of relying on forensics after the fact.
+Root cause pinned exactly: the process was alive and completely stable (GPU memory flat,
+zero drift) right up to `ps etime` = `06:00:00`, then dead 5 seconds later — exactly
+21600 seconds, i.e. **my own `timeout 21600` wrapper**, not OOM, not the display event,
+not a code bug. The job itself was healthy throughout both attempts; it simply needs
+somewhat more than 6h to complete one `repeat_time=1` pass under the current mild ~16GB
+GPU contention, and the safety-net timeout I added cut it off right at the finish line.
+This also reframes attempt 5's "~5h50m" death (estimated from coarse 30-min heartbeats,
+not measured precisely) as very likely the same 6h timeout, not a distinct failure.
+
+**Lesson:** a "safety net" timeout on a job with unknown true runtime can itself become
+the failure mode being investigated. When wrapping a long unattended job, either omit the
+timeout, or set it generously past any plausible estimate, or — better — instrument the
+job itself with fine-grained progress logging so a self-imposed bound is distinguishable
+from an external kill without multi-hour forensic replay.
+
 ## Next steps
 
-- Retry Task 1 (`GPT_eval_multi.py`, already reduced to 3 repeats,
-  `T2M-GPT/pretrained/` checkpoints already on disk) when the GPU allows — ideally
-  confirm the other job has actually finished first (`nvidia-smi
-  --query-compute-apps`) rather than attempting blind again.
+- Retry in progress (2026-07-29/30) as `TEST_GPT_verify3`, `timeout 43200` (12h), with
+  5-second local heartbeat logging from the start this time. GPU contention (~16GB
+  second process) still present but attempts 5/6 showed the job proceeds steadily
+  through it (GPU util 100%, no throughput collapse) — it just needs wall-clock room.
 - Once Task 1 lands: if generation FID/R-precision also land near the paper, Step
   2's done-criterion is fully met and Step 3 (VQ-VAE joint finetune) is unlocked. If
   not, investigate before proceeding — do not build Step 3 on an uncalibrated
