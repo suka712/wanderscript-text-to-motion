@@ -1,5 +1,5 @@
 # grounding_probe — does generated motion reach a fed goal?
-Updated: 2025-08-09 · Branch: track1-grounding · Requires 000_setup_3090.md PASS
+Updated: 2026-08-09 · Branch: track1-grounding · Requires 000_setup_3090.md PASS
 
 ## Question
 With the tokenizer FROZEN, can a transformer conditioned on start pose + goal generate
@@ -46,5 +46,5 @@ motion that ignores the goal. That's what the baseline catches. Include a few ge
 trajectory renders for eyeballing.
 
 ## Deliverable
-track1_grounding/RESULTS.md: goal-error + start-error, conditioned vs unconditioned, a few
+docs/track_1/RESULTS.md: goal-error + start-error, conditioned vs unconditioned, a few
 renders, clear verdict on the gate.

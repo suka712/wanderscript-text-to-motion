@@ -1,5 +1,5 @@
 # tokenizer_finetune — joint VQ-VAE finetune (diagnostic)
-Updated: 2025-08-09 · Branch: track2-tokenizer · Runs on 4090, parallel to Track 1
+Updated: 2026-08-09 · Branch: track2-tokenizer · Runs on 4090, parallel to Track 1
 
 ## Question
 Does joint finetune move HUMANISE-lie 140→~90 without regressing general motion — and was
@@ -7,7 +7,9 @@ the lie gap real codebook coverage or an upstream artifact? Diagnostic only: doe
 re-extract tokens or touch the transformer. Branch does NOT merge on completion.
 
 ## Branch
-On a clean, committed main: `git checkout -b track2-tokenizer`. Commit here.
+On a clean, committed `master` (**not `main`** — `origin/main` on this remote is an
+unrelated old repo; `master` is the real branch, confirm with `git branch -a` if unsure):
+`git checkout -b track2-tokenizer`. Commit here.
 
 ## Setup
 - Unfreeze the VQ-VAE (encoder + codebook + decoder).
@@ -22,6 +24,14 @@ Joint finetune on both datasets. Checkpoint regularly; keep the frozen baseline 
 ## Validation — per category, held-out (MPJPE)
 - HUMANISE: walk / stand / sit / lie
 - HumanML3D: overall + lie (controls: baseline 45.3, H3D-lie 90.1)
+- **Normalization**: all reference numbers here (45.3, 47.9, 90.1, 139.8, etc.) were
+  computed with the FROZEN checkpoint's own mean/std
+  (`checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/{mean,std}.npy`), not
+  `H3D_ROOT/Mean.npy`/`Std.npy` — using the latter inflates every number ~2-3x and has
+  already caused two false alarms in this project. For the finetuned checkpoint,
+  decide explicitly whether to keep using the frozen checkpoint's original norm stats
+  (finetuning warm-starts from that embedding space) or recompute them — and state
+  which you used when reporting results, since this comparison is meaningless otherwise.
 
 ## Success — BOTH must hold
 1. Interaction improves: HUMANISE-lie drops from 140 toward ~90.
@@ -39,5 +49,5 @@ Joint finetune on both datasets. Checkpoint regularly; keep the frozen baseline 
 - Do not merge this branch on completion — report; merge decided at reconciliation.
 
 ## Deliverable
-track2_tokenizer/RESULTS.md: per-category MPJPE before vs after, both criteria evaluated,
+docs/track_2/RESULTS.md: per-category MPJPE before vs after, both criteria evaluated,
 a few lie reconstruction renders (moderate vs broken), clear verdict on the gate.

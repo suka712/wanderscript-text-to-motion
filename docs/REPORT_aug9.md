@@ -1,4 +1,4 @@
-# Progress Report — 2025-08-09
+# Progress Report — 2026-08-09
 
 Consolidated record of achieved state. Supersedes STEP1_plumbing.md and
 STEP2_baseline_calibration.md.
@@ -24,7 +24,14 @@ Body-level, 22 joints. See CLAUDE.md for the full pipeline and contributions.
 - **Scene meshes:** 643 ScanNet meshes load; BEV renderer world→pixel error 0.67 px.
 
 ## 3. Tokenizer characterization — DONE
-Eval harness reproduces T2M-GPT (recon FID 0.066 vs paper 0.070; R@1/2/3 match) — trusted.
+Eval harness reproduces T2M-GPT's **reconstruction** FID (0.066 vs paper 0.070; R@1/2/3
+match) — trusted for reconstruction. Note this is scoped to reconstruction only: the
+full generation FID/R-precision reproduction (autoregressive sampling, not just
+encode/decode) is still unresolved after multiple attempts, all root-caused to a
+self-inflicted timeout rather than a code or GPU-contention problem — see
+`docs/old_docs_aug8/STEP2_baseline_calibration.md` (Task 1) before re-attempting, to
+avoid rediscovering the same trap. Not currently blocking either track below, since
+neither depends on the paper-comparable generation-FID harness.
 
 Per-category reconstruction, FROZEN tokenizer (MPJPE, mm):
 | category | HUMANISE | reference |
@@ -43,9 +50,11 @@ Foundation complete: data prepared and verified, harness trusted, base tokenizer
 characterized. No model trained yet. Architecture is fully specified (CLAUDE.md).
 
 Verification framing used throughout (two pipelines):
-- A (converter only): 22-joint → 263 → invert → compare. Isolates converter. 0.80 mm.
-- B (with VQ-VAE): 263 → encoder → quantize → decoder → 263 → compare. Converter held
-  constant, so error is the tokenizer. Produces the section-3 numbers.
+- A (converter only, `scripts/verify/check18/19`): 22-joint → 263 → invert → compare.
+  Isolates converter. 0.80 mm.
+- B (with VQ-VAE, `scripts/verify/check7/14/20`): 263 → encoder → quantize → decoder →
+  263 → compare. Converter held constant, so error is the tokenizer. Produces the
+  section-3 numbers.
 
 ## 5. Next — two parallel diagnostic tracks
 Open question: is a tokenizer finetune actually needed? Two independent experiments,
@@ -54,11 +63,11 @@ run in parallel, reconciled after. Both are diagnostic, not the committed build.
 - **Track 1 — grounding (3090, branch `track1-grounding`).** Frozen tokenizer; add
   start-pose + goal conditioning to the transformer; probe whether generated motion
   reaches the goal. Answers "is the tokenizer even the bottleneck?"
-  Specs: docs/track1_grounding/.
+  Specs: `docs/track_1/`. Deliverable: `docs/track_1/RESULTS.md`.
 - **Track 2 — tokenizer (4090, branch `track2-tokenizer`).** Joint finetune on
   HumanML3D + HUMANISE; does HUMANISE-lie improve 140→~90 without regressing general
   motion? Also diagnoses whether the lie gap is real coverage or an upstream artifact.
-  Spec: docs/track2_tokenizer/.
+  Spec: `docs/track_2/`. Deliverable: `docs/track_2/RESULTS.md`.
 
 Reconcile:
 | Track 1 grounding | Track 2 finetune | verdict |
