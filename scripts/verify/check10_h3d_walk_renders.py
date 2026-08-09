@@ -14,14 +14,14 @@ import warnings
 import numpy as np
 import torch
 
-sys.path.insert(0, "/home/user/Khiem-ssh/wander/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 warnings.filterwarnings("ignore")
 
 import motion_features as mf  # noqa: E402
 from vqvae_loader import load_vqvae  # noqa: E402
 
-H3D_ROOT = "/media/user/2tb/motion_data/H3D"
-OUT_DIR = "/home/user/Khiem-ssh/wander/scratch_outputs/step2_recon"
+H3D_ROOT = os.environ.get("WANDER_H3D_ROOT", "/media/user/2tb/motion_data/H3D")
+OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scratch_outputs", "step2_recon")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

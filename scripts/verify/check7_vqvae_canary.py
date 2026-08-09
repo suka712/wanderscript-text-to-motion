@@ -29,16 +29,16 @@ import warnings
 import numpy as np
 import torch
 
-sys.path.insert(0, "/home/user/Khiem-ssh/wander/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 warnings.filterwarnings("ignore")
 
 import motion_features as mf  # noqa: E402
 from vqvae_loader import load_vqvae  # noqa: E402
 
-H3D_ROOT = "/media/user/2tb/motion_data/H3D"
-HUMANISE_MOTIONS = "/media/user/2tb/motion_data/HUMANISE/contact_motion/motions"
-T2M_GPT_ROOT = "/home/user/Khiem-ssh/T2M-GPT"
-OUT_DIR = "/home/user/Khiem-ssh/wander/scratch_outputs/canary"
+H3D_ROOT = os.environ.get("WANDER_H3D_ROOT", "/media/user/2tb/motion_data/H3D")
+HUMANISE_MOTIONS = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE") + "/contact_motion/motions"
+T2M_GPT_ROOT = os.environ.get("WANDER_T2M_GPT_ROOT", "/home/user/Khiem-ssh/T2M-GPT")
+OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scratch_outputs", "canary")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

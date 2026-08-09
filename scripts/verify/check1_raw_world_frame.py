@@ -52,12 +52,13 @@ Caveats to resolve before writing real pipeline code (not done here, per Step-1 
 
 Run this script to reproduce the spot check.
 """
+import os
 import pickle
 import zipfile
 import numpy as np
 import io
 
-ROOT = "/media/user/2tb/motion_data/HUMANISE"
+ROOT = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE")
 
 def load_pkl_from_zip(zip_path, member_name):
     with zipfile.ZipFile(zip_path) as zf:

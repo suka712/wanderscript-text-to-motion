@@ -33,18 +33,19 @@ lengths differ more from the canonical reference. Do not treat a small
 nonzero number as a defect without checking whether it's dominated by
 retargeting vs. an actual bug.
 """
+import os
 import sys
 import warnings
 
 import numpy as np
 
-sys.path.insert(0, "/home/user/Khiem-ssh/wander/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 warnings.filterwarnings("ignore")
 
 import motion_features as mf  # noqa: E402
 from humanise_join import build_flat_join  # noqa: E402
 
-HUMANISE_MOTIONS = "/media/user/2tb/motion_data/HUMANISE/contact_motion/motions"
+HUMANISE_MOTIONS = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE") + "/contact_motion/motions"
 N_PER_ACTION = 3
 
 

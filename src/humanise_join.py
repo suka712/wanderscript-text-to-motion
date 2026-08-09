@@ -36,6 +36,7 @@ by decomposing the SMPL-X axis-angle global_orient -- this avoids a second,
 independent up-axis assumption about a value we don't directly need.
 """
 import io
+import os
 import pickle
 import zipfile
 from dataclasses import dataclass
@@ -44,7 +45,7 @@ from typing import Optional
 import numpy as np
 from natsort import natsorted
 
-ROOT = "/media/user/2tb/motion_data/HUMANISE"
+ROOT = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE")
 ACTIONS = natsorted(["walk", "sit", "stand up", "lie"])
 ANCHOR_FRAME = {"sit": -1, "stand up": 0, "walk": -1, "lie": -1}
 

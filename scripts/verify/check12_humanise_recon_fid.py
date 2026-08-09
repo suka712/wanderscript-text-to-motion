@@ -32,15 +32,14 @@ import torch
 
 warnings.filterwarnings("ignore")
 
-WANDER_ROOT = "/home/user/Khiem-ssh/wander"
-T2M_GPT_ROOT = "/home/user/Khiem-ssh/T2M-GPT"
-sys.path.insert(0, f"{WANDER_ROOT}/src")
+T2M_GPT_ROOT = os.environ.get("WANDER_T2M_GPT_ROOT", "/home/user/Khiem-ssh/T2M-GPT")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import motion_features as mf  # noqa: E402
 from humanise_join import build_flat_join  # noqa: E402
 from vqvae_loader import load_vqvae  # noqa: E402
 
-HUMANISE_MOTIONS = "/media/user/2tb/motion_data/HUMANISE/contact_motion/motions"
+HUMANISE_MOTIONS = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE") + "/contact_motion/motions"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_T = 196
 UNIT_LENGTH = 4

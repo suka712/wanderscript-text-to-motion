@@ -1,0 +1,40 @@
+# Pinned to the exact versions proven working on the 4090 (conda env `afford`,
+# python 3.8.20) across every verify script in this repo as of 2026-08-09. This is
+# NOT the same as T2M-GPT's own upstream environment.yml (torch 1.8.1 / cuda10.1) --
+# that combo predates and is incompatible with Ampere/Ada-generation cards (3090/4090).
+# When setting up a new machine, match THIS list, not T2M-GPT's.
+#
+# Install order matters for the two git-sourced packages below (torch must exist
+# first). Suggested sequence:
+#   conda create -n wander python=3.8.20 -y && conda activate wander
+#   pip install torch==1.12.0+cu113 torchvision==0.13.0+cu113 torchaudio==0.12.0 \
+#     --extra-index-url https://download.pytorch.org/whl/cu113
+#   pip install -r requirements.txt
+#
+# cu113 wheels work on newer drivers via CUDA's minor-version compatibility; if the
+# target machine's driver is too old for cu113, that will surface as a torch.cuda
+# import/availability failure -- check `nvidia-smi` driver version first.
+
+numpy==1.24.3
+scipy==1.10.1
+matplotlib==3.7.1
+trimesh==3.21.7
+tensorboard==2.12.1
+smplx==0.1.28
+ftfy==6.2.3
+regex==2024.11.6
+
+# OpenAI CLIP -- not on PyPI under an importable name that matches; must come from
+# GitHub. (A PyPI package literally named "clip" exists but is unrelated -- do not
+# `pip install clip`.)
+git+https://github.com/openai/CLIP.git
+
+# --- Optional, NOT required by anything in this repo's actual pipeline ---
+# pytorch3d==0.7.8 is present in the working `afford` env (it's a shared env reused
+# across other projects on this machine) but nothing in wander/, and nothing in
+# T2M-GPT's actual train/eval path (GPT_eval_multi.py, VQ_eval.py, models/vqvae.py),
+# imports it. It's only relevant if you use T2M-GPT's optional SMPL mesh-rendering
+# scripts under visualize/. It's also the most build-fragile package here (version-
+# sensitive against torch+CUDA, frequently needs a source build) -- skip it unless
+# you specifically need mesh rendering, and if you do, build it against the torch/
+# CUDA versions above rather than pinning a version here blind.

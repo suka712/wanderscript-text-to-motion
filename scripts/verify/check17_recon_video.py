@@ -19,8 +19,8 @@ import motion_features as mf  # noqa: E402
 from humanise_join import build_flat_join  # noqa: E402
 from vqvae_loader import load_vqvae  # noqa: E402
 
-T2M_GPT_ROOT = "/home/user/Khiem-ssh/T2M-GPT"
-HUMANISE_MOTIONS = "/media/user/2tb/motion_data/HUMANISE/contact_motion/motions"
+T2M_GPT_ROOT = os.environ.get("WANDER_T2M_GPT_ROOT", "/home/user/Khiem-ssh/T2M-GPT")
+HUMANISE_MOTIONS = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE") + "/contact_motion/motions"
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scratch_outputs", "recon_video")
 os.makedirs(OUT_DIR, exist_ok=True)
 

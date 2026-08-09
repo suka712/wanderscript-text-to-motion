@@ -51,7 +51,9 @@ import sys
 import numpy as np
 import torch
 
-MDM_ROOT = "/home/user/jered/T2M_test/motion-diffusion-model"
+MDM_ROOT = os.environ.get(
+    "WANDER_MDM_ROOT", "/home/user/jered/T2M_test/motion-diffusion-model"
+)
 if MDM_ROOT not in sys.path:
     sys.path.insert(0, MDM_ROOT)
 
@@ -65,7 +67,7 @@ from data_loaders.humanml.scripts import motion_process as _mp  # noqa: E402
 from data_loaders.humanml.utils import paramUtil as _paramUtil  # noqa: E402
 from data_loaders.humanml.common.skeleton import Skeleton as _Skeleton  # noqa: E402
 
-H3D_ROOT = "/media/user/2tb/motion_data/H3D"
+H3D_ROOT = os.environ.get("WANDER_H3D_ROOT", "/media/user/2tb/motion_data/H3D")
 NUM_JOINTS = 22
 
 # HumanML3D t2m constants (from the official recipe's __main__ block in

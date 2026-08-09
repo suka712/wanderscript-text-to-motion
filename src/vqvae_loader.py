@@ -14,12 +14,13 @@ Checkpoint provenance:
   Repo commit: b1446f1 (Mael-zys/T2M-GPT, "Update t2m extractor")
   Local path: /home/user/Khiem-ssh/T2M-GPT/pretrained/VQVAE/net_best_fid.pth
 """
+import os
 import sys
 import types
 
 import torch
 
-T2M_GPT_ROOT = "/home/user/Khiem-ssh/T2M-GPT"
+T2M_GPT_ROOT = os.environ.get("WANDER_T2M_GPT_ROOT", "/home/user/Khiem-ssh/T2M-GPT")
 if T2M_GPT_ROOT not in sys.path:
     sys.path.insert(0, T2M_GPT_ROOT)
 

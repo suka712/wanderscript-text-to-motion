@@ -3,7 +3,7 @@
 import numpy as np
 import os
 
-ROOT = "/media/user/2tb/motion_data"
+ROOT = os.environ.get("WANDER_MOTION_DATA_ROOT", "/media/user/2tb/motion_data")
 
 def inspect_npy(path):
     arr = np.load(path, allow_pickle=True)

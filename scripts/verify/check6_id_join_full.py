@@ -31,12 +31,13 @@ per-clip metadata table and is what this script validates against.
 """
 import csv
 import io
+import os
 import pickle
 import zipfile
 
 from natsort import natsorted
 
-ROOT = "/media/user/2tb/motion_data/HUMANISE"
+ROOT = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE")
 ACTIONS = natsorted(["walk", "sit", "stand up", "lie"])
 
 

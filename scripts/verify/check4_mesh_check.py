@@ -6,8 +6,12 @@ Does NOT attempt BEV rendering -- only existence + trimesh load + bounds sanity.
 import os
 import trimesh
 
-HUMANISE_SCENES = "/media/user/2tb/motion_data/HUMANISE/scenes"
-SCANNET_SCANS = "/media/user/2tb/motion_data/scannet/scans"
+HUMANISE_SCENES = os.environ.get(
+    "WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE"
+) + "/scenes"
+SCANNET_SCANS = os.environ.get(
+    "WANDER_SCANNET_ROOT", "/media/user/2tb/motion_data/scannet/scans"
+)
 
 humanise_ids = sorted(os.listdir(HUMANISE_SCENES))
 scannet_ids = sorted(os.listdir(SCANNET_SCANS))

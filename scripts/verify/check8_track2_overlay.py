@@ -27,13 +27,15 @@ import warnings
 import numpy as np
 import trimesh
 
-sys.path.insert(0, "/home/user/Khiem-ssh/wander/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 warnings.filterwarnings("ignore")
 
 import humanise_join as hj  # noqa: E402
 
-SCANNET_ROOT = "/media/user/2tb/motion_data/scannet/scans"
-OUT_DIR = "/home/user/Khiem-ssh/wander/scratch_outputs/overlay"
+SCANNET_ROOT = os.environ.get(
+    "WANDER_SCANNET_ROOT", "/media/user/2tb/motion_data/scannet/scans"
+)
+OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scratch_outputs", "overlay")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 

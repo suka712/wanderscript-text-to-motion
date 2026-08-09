@@ -37,7 +37,9 @@ from dataclasses import dataclass
 import numpy as np
 import trimesh
 
-SCANNET_ROOT = "/media/user/2tb/motion_data/scannet/scans"
+SCANNET_ROOT = os.environ.get(
+    "WANDER_SCANNET_ROOT", "/media/user/2tb/motion_data/scannet/scans"
+)
 
 # Height slicing (meters above floor). Matches the ~2m "clear the ceiling so
 # the camera can see furniture" convention used in the RGB render, and a

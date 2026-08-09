@@ -15,17 +15,20 @@ dataset" check (see docs/STEP1_plumbing.md) -- joint order and axis
 convention were already confirmed on samples (see src/motion_features.py
 docstring); this check is about coverage, not correctness-in-principle.
 """
+import os
 import sys
 import time
 import warnings
 import numpy as np
 
-sys.path.insert(0, "/home/user/Khiem-ssh/wander/src")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 import motion_features as mf  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
-ROOT = "/media/user/2tb/motion_data/HUMANISE/contact_motion/motions"
+ROOT = os.environ.get(
+    "WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE"
+) + "/contact_motion/motions"
 N = 19648
 
 if __name__ == "__main__":
