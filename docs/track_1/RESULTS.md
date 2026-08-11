@@ -201,11 +201,11 @@ Launched sequentially (unconditioned first, required-baseline priority, then
 conditioned) in the background; this section will be filled in with final
 train loss/accuracy as each finishes.
 
-- Unconditioned: iter 100/4000, loss 1.70, token-accuracy 52.15% (climbing
-  fast from a loss ~8.9 cold-start on `cond_emb`, as expected for finetuning
-  an otherwise-converged pretrained model with one freshly-initialized-ish
-  input layer).
-- Conditioned: not started yet (sequential after unconditioned).
+- **Unconditioned: DONE.** 4000/4000 iters, final loss 0.70, token-accuracy
+  76.1% (climbed from a loss ~8.9 cold-start on `cond_emb`, as expected for
+  finetuning an otherwise-converged pretrained model with one
+  freshly-initialized-ish input layer). ~28 min wall-clock on the 3090.
+- Conditioned: running now (sequential after unconditioned, same box).
 
 ### Probe eval — not started yet
 Will report goal-error/start-error (mean/median, conditioned vs
