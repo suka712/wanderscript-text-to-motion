@@ -17,12 +17,9 @@ but not sacred — components marked SWAPPABLE can change if evidence says so. C
 marked LOAD-BEARING cannot change without re-deciding the whole project. When a
 LOAD-BEARING assumption looks false, STOP and surface it, do not work around it.
 
-The inverse also applies, and it has now happened once: **when a result says a
-LOAD-BEARING component fails, verify the measurement before believing it.** Track 1
-reported that goal grounding was impossible and recommended re-architecting the project
-around it. The finding was an artifact of a 90° bug in its own eval. The cost of checking
-was one afternoon; the cost of acting on it would have been the whole design. Numbers that
-would change the architecture get an oracle control first — no exceptions (section 5 #4).
+The inverse also applies, and has happened once: **when a result says a LOAD-BEARING
+component fails, verify the measurement before believing it.** Track 1's "grounding is
+impossible, re-architect" was an artifact of a 90° bug in its own eval. See section 5 #2.
 
 ---
 
@@ -59,19 +56,15 @@ Understand both before touching either.
   2. World-frame root trajectory — per-frame absolute (x, y, yaw), Z-up ScanNet frame.
      Used for placement, chaining, goal/start conditioning, and all scene metrics.
 - Yaw is always represented as `(sin, cos)`, never a raw scalar (avoids wraparound).
-- **Two yaw conventions exist and they differ by 90°. LOAD-BEARING.** HumanML3D's
-  `process_file` canonicalizes frame 0 to face **+Z in its Y-up frame**; under our
-  `zup_to_yup_hml` relabel that is **−Y in the Z-up world frame, i.e. world yaw −π/2**.
-  But `humanise_join.compute_track2` defines **world yaw 0 = facing +X**. So placing a
-  canonicalized clip at a world start pose rotates by **`yaw0 + π/2`**, and expressing a
-  world point in the model's frame uses the inverse (`se2_utils.world_to_local_xy`).
-  Getting this wrong rotates every trajectory 90° and is invisible to a start-error
-  check — it already invalidated one track's conclusion. See RECONCILIATION_aug12.md.
+- **Two yaw conventions, 90° apart. LOAD-BEARING.** Canonicalized frame 0 faces +Z in
+  HumanML3D's Y-up frame = **−Y in Z-up world = yaw −π/2**; but `compute_track2` defines
+  **world yaw 0 = +X**. So placement rotates by **`yaw0 + π/2`** (`se2_utils.se2_place`,
+  inverse `world_to_local_xy`). Getting it wrong rotates every trajectory 90° and is
+  invisible to a start-error check — it already invalidated one track's conclusion.
 - **Corollary, and the main design lesson so far: give the model geometry in the frame it
-  generates in.** Goals, and later the chaining prefix, must be start-relative and
-  heading-aligned. Feeding absolute world coordinates forces the model to compute
-  `R(yaw₀)ᵀ(goal − start)` — a bilinear op — and it will simply fail to. Measured:
-  goal-error 0.515 m absolute-frame vs 0.164 m relative-frame, identical everything else.
+  generates in** — start-relative, heading-aligned. Absolute world coords force it to
+  compute `R(yaw₀)ᵀ(goal − start)`, a bilinear op, and it will simply fail to. Measured:
+  0.515 m absolute vs 0.164 m relative, everything else identical.
 
 ### 2b. Training phase (two stages, STRICT ORDER)
 
@@ -79,31 +72,14 @@ Stage A — **VQ-VAE (motion tokenizer) joint finetune.**
 - What it is: the VQ-VAE encodes a motion clip into a sequence of discrete tokens (indices
   into a learned codebook) and decodes tokens back to motion. It is the vocabulary of
   motion the rest of the system speaks in.
-- Why finetune (not freeze): the off-the-shelf T2M-GPT VQ-VAE is trained on HumanML3D only
-  and reconstructs HUMANISE interaction worse than locomotion. **Corrected number** (the
-  original canary used a normalization mismatched to this checkpoint — same class of bug
-  found and fixed in the Step 2 FID work; re-run with the correct evaluator-consistent
-  normalization): H3D baseline MPJPE 45.3mm; HUMANISE walk 47.9mm (1.06x), stand-up 67.6mm
-  (1.49x), sit 72.6mm (1.60x), **lie 139.8mm (3.09x)**. Lie is still the worst category by
-  a real margin, and a 10-clip visual spot-check found no catastrophic outliers (65-246mm,
-  uniform moderate degradation, not a broken subset) — but "3.09x, moderately worse" is a
-  materially weaker claim than the original "5.1x, structurally broken." A general-motion
-  paper still needs interaction, so the codebook still needs to cover it, but the magnitude
-  of the original justification should not be quoted as-is. See
-  docs/old_docs_aug8/STEP1_plumbing.md Check 3 for the full before/after and the visual
-  evidence.
-  **These figures are superseded — the 45.3mm baseline is LEAKED (see section 3).** The
-  held-out numbers are: H3D 56.11, walk 50.20, stand-up 66.98, sit 69.55, lie 136.91. The
-  shape of the finding is unchanged; the reference point moves.
-- **DONE 2026-08-12** — this finetune has been run and it worked: lie 136.9 -> 96.3mm, no
-  forgetting. Numbers and method in section 3 and `docs/RECONCILIATION_aug12.md`.
-- How: finetune jointly on **HumanML3D + HUMANISE**, balanced sampling (HumanML3D 14.6k
-  vs HUMANISE 19.6k — weight so neither dominates; HUMANISE-only would cause catastrophic
-  forgetting of general motion).
-- Input: 263-dim canonicalized motion. Output: a finetuned codebook + encoder + decoder.
-- Success = per-category reconstruction (walk/stand/sit/lie) all acceptable, sit/lie
-  brought down from baseline, general motion not regressed. This number is a reportable
-  result, not just a gate.
+- Why finetune (not freeze): the off-the-shelf VQ-VAE is trained on HumanML3D only and
+  reconstructs HUMANISE interaction worse than locomotion — held-out MPJPE, frozen: H3D
+  56.11mm, walk 50.20, stand-up 66.98, sit 69.55, **lie 136.91**. (Older docs quote 45.3 /
+  139.8 etc.; those were leaked and/or mis-normalized — see section 3.)
+- **DONE 2026-08-12 and it worked**: joint finetune on HumanML3D + HUMANISE, 1:1 balanced
+  sampling, lr 2e-5, 20k iters. Lie 136.9 -> 96.3mm, every category improved, H3D held-out
+  flat. Numbers and method in section 3 and `docs/RECONCILIATION_aug12.md`. This result is
+  reportable, not just a gate.
 
 Stage B — **Transformer finetune (conditional continuation).**
 - What it is: the autoregressive model (the "GPT" of T2M-GPT) that predicts a sequence of
@@ -181,26 +157,16 @@ to an ablation ("+X% non-collision") and the paper still stands on explicit cont
 conditional-continuation chaining + an interaction-capable tokenizer. Do not let the
 project's success depend on this component.
 
-### 2f. Grounding — VALIDATED (2026-08-12), was the #2 project risk
-The grounding probe (build-order step 4) has been run and **passed**. Frozen tokenizer,
-single segment, relative-frame goal conditioning, 200 held-out HUMANISE clips:
+### 2f. Grounding — VALIDATED (2026-08-12)
+Probe passed (frozen tokenizer, single segment, 200 held-out clips). Goal-error:
+**0.164 m relative-frame** vs 0.490 m unconditioned, 0.515 m absolute-frame, on a 0.124 m
+oracle floor (null = 0.627 m). Holds across displacement scale, with the model/oracle
+ratio flat at 1.1–1.4 — **goal accuracy is limited by tokenizer reconstruction, not
+goal-following**, which is the argument for taking Stage A's finetune.
 
-| | goal-error | corr(commanded, achieved) |
-|---|---|---|
-| NULL (stay at start) | 0.627 m | — |
-| unconditioned | 0.490 m | +0.07, +0.62 |
-| conditioned, absolute frame | 0.515 m | −0.12, +0.60 |
-| **conditioned, relative frame** | **0.164 m** | **+0.90, +0.97** |
-| ORACLE (ground-truth tokens) | 0.124 m | — |
-
-The model lands within 4 cm of the tokenizer's own reconstruction floor. Holds across
-displacement scale (0.07 m error at <0.25 m commanded, 0.51 m at >2 m) with the
-model/oracle ratio flat at 1.1–1.4 — **what limits goal accuracy is tokenizer
-reconstruction, not goal-following.** That is the argument for taking Stage A's finetune.
-
-Do NOT overclaim this. It is single-segment, no chaining, no scene features, and every
-fed goal is in-distribution (displacement std ~0.35/0.73 m). It retires risk #2 in
-section 5. It says nothing about risk #1 (chaining).
+Do NOT overclaim: single-segment, no chaining, no scene features, in-distribution goals
+only. Retires the goal-grounding risk; says nothing about chaining (risk #1). Detail:
+`docs/RECONCILIATION_aug12.md`.
 
 ---
 
@@ -249,14 +215,10 @@ From the two diagnostic tracks (`docs/RECONCILIATION_aug12.md`, 2026-08-12):
   (`prepare_quantizer_for_finetune`).
 
 Bug ledger — four silent frame/normalization bugs so far, all the same shape (a convention
-mismatch that degrades a number without crashing anything). Read this before adding a new
-measurement; see failure point #4 in section 5:
-1. Y-up vs Z-up for HUMANISE raw joints (STEP1) — caught.
-2. Wrong mean/std in the MPJPE canary; 137 mm read as real, actually 45 mm (STEP2) — caught.
-3. The same normalization error again, in the Track 1 probe's encode/decode — caught by
-   that track, but only after it had produced a full set of published numbers.
-4. **90° SE(2) yaw-convention error** (2a) — NOT caught by that track; it inverted the
-   track's conclusion and was found in orchestrator review.
+mismatch that degrades a number without crashing anything): Z-up vs Y-up (STEP1); wrong
+mean/std in the MPJPE canary (STEP2); the same normalization error again in Track 1's
+encode/decode; and the 90° SE(2) error in 2a. The last two were caught only after
+producing published numbers, and the last inverted a track's conclusion. See risk #2.
 
 Still outstanding from STEP2 (not blocking anything):
 - T2M-GPT generation FID/R-precision reproduction (Task 1) — root-caused to a self-inflicted
@@ -296,38 +258,24 @@ failure after building everything on top.
 1. **Chaining continuity (2d).** Conditional continuation must actually produce smooth
    pose transitions across segments. Hard, underestimated. If continuation training does
    not give clean seams, that is a core-mechanism problem — surface immediately.
-2. ~~**Goal grounding.**~~ **RETIRED 2026-08-12 — the probe passed, see 2f.** Goal-error
-   0.164 m vs a 0.124 m tokenizer floor and a 0.490 m unconditioned baseline. The original
-   framing below was right about the mechanism but the fix is cheap: express the goal in
-   the start frame. Kept for the record; do not re-litigate, do not pivot to
-   trajectory-first.
-   <details><summary>original text</summary>
-   Even with explicit goal coords fed in, the model must LEARN to
-   reach them — and canonicalized targets give a weak gradient toward absolute position.
-   DE-RISK EARLY with a grounding probe (section 6) BEFORE building the full transformer
-   stage. If it cannot reach fed coordinates at toy scale, pivot (e.g. predict root
-   trajectory explicitly first, then generate motion along it).
-   </details>
-3. ~~**VQ-VAE joint finetune balance.**~~ **RETIRED 2026-08-12 — Track 2 passed.** Joint
-   finetune at 1:1 sampling, lr 2e-5: HUMANISE-lie 136.9 -> 96.3 mm, H3D held-out flat,
-   no category regressed. No forgetting observed at this balance.
-4. **NEW — measurement validity.** This project has now shipped four silent frame/
-   normalization bugs (see section 3), two of which were only caught after they had
-   changed a conclusion. Each was missed because the check used could not detect it —
-   start-error cannot see a rotation; per-frame MPJPE cannot see cumulative drift.
-   **MANDATORY from here: every pipeline that emits a number gets an oracle control** —
-   push ground truth through the identical path and confirm near-perfect output BEFORE
-   reading any model number off it. If the oracle is not small compared to the effect you
-   are measuring, you have no measurement. This is now the highest-frequency failure mode
-   in the project, ahead of any algorithmic risk.
-5. **Collision-guided decoding (2e).** May not steer. Not the hill — has fallbacks and
+2. **Measurement validity.** Four silent frame/normalization bugs so far (section 3), two
+   caught only after they had changed a conclusion. Each was missed because the check used
+   could not detect it — start-error cannot see a rotation; per-frame MPJPE cannot see
+   cumulative drift. **MANDATORY: every pipeline that emits a number gets an oracle
+   control** — push ground truth through the identical path and confirm near-perfect
+   output BEFORE reading any model number off it. If the oracle is not small relative to
+   the effect you are measuring, you have no measurement. Highest-frequency failure mode
+   in this project, ahead of any algorithmic risk.
+3. **Collision-guided decoding (2e).** May not steer. Not the hill — has fallbacks and
    demotes to an ablation. Low strategic risk by design.
-6. **Shared GPU.** The 4090 is shared; the 3090 (added Aug 2026) is not. Two training
-   stages (~2x compute). See section 8.
+4. **Shared GPU.** The 4090 is shared; the 3090 is not. See section 8.
+5. ~~Goal grounding~~ RETIRED 2026-08-12 — probe passed, see 2f. Do not pivot to
+   trajectory-first.
+6. ~~VQ-VAE joint finetune balance~~ RETIRED 2026-08-12 — Track 2 passed at 1:1 sampling,
+   lr 2e-5, no forgetting.
 
-Meta: with grounding retired, **chaining (#1) is now the only genuine research bet left**,
-and everything else is engineering plus discipline about measurement (#4). That is a much
-better position than the Aug-9 plan assumed. Expect iteration on chaining specifically.
+Meta: with grounding retired, **chaining (#1) is the only genuine research bet left**;
+everything else is engineering plus discipline about measurement (#2).
 
 ---
 
@@ -336,10 +284,9 @@ better position than the Aug-9 plan assumed. Expect iteration on chaining specif
 2. ~~Baseline calibration~~ DONE for reconstruction (FID 0.066 vs paper 0.070, harness
    trusted). Generation-FID reproduction is still open but blocks nothing — see section 3.
 3. ~~**VQ-VAE joint finetune**~~ DONE (Track 2, merged). Per-category reconstruction
-   validated held-out. **Tokens have NOT been re-extracted yet — that is step 4.**
-4. ~~**Grounding probe**~~ DONE and PASSED (Track 1, corrected — see 2f and
-   `docs/RECONCILIATION_aug12.md`). Ran with the FROZEN tokenizer, which was the right
-   call: it isolated grounding from tokenizer quality.
+   validated held-out. **Tokens have NOT been re-extracted yet — that is step 5.**
+4. ~~**Grounding probe**~~ DONE and PASSED (Track 1, corrected — see 2f). Ran on the
+   FROZEN tokenizer, which was right: it isolated grounding from tokenizer quality.
 
 **-> YOU ARE HERE. Next: step 5.**
 
@@ -371,24 +318,20 @@ better position than the Aug-9 plan assumed. Expect iteration on chaining specif
   checkpoints, renders live on disk and are gitignored — never committed.
 - T2M-GPT base code: `/home/user/Khiem-ssh/T2M-GPT/` — kept SEPARATE from the working
   `wander` repo; wander imports/points at it, does not fork it in.
-- Hardware: two boxes, both on Tailscale, both reachable from the Mac via ssh
-  (`train-4090` = `ntx`, `train-3090` = `dsx`).
-  - **4090** (`ntx`, 25 GB) — **shared with another user's job**, confirmed directly (an
-    eval stalled for hours at 100% util with zero progress, traced to a foreign ~16-19 GB
-    process). Check `nvidia-smi --query-compute-apps` before blaming your code. Light jobs
-    (VQ-VAE eval) get cycles under contention; autoregressive generation may not. Ran
-    Track 2. Paths: `/media/user/2tb/motion_data`, `/home/user/Khiem/T2M-GPT`.
-  - **3090** (`dsx`, 24 GB, added Aug 2026) — **not shared**. Ran Track 1. Env vars in
-    `~/.wander_env` (source explicitly; non-interactive shells do not pick it up). Conda
-    env `afford` was raw-copied from the 4090, so its console-script shebangs point at the
-    4090's paths — bare `pip` is broken, use `~/anaconda3/envs/afford/bin/python -m pip`.
-    Paths: `~/wander_data/motion_data`, `~/Khiem/T2M-GPT`, repo at
-    `~/Khiem/wanderscript-text-to-motion`.
-  - **Network**: both boxes sit behind an upstream **per-TCP-flow rate limit (~10-30 KB/s
-    per connection)** — not fixable locally, confirmed on both. `git clone`/`curl` crawl
-    while browsers feel fine (many parallel connections). For anything large, rsync from
-    the other box over the LAN/Tailscale direct path (~10 MB/s) instead of downloading.
-    This repo is tiny, so `git pull`/`push` is unaffected in practice.
+- Hardware: two boxes on Tailscale, both ssh-able from the Mac as `train-4090` (`ntx`) and
+  `train-3090` (`dsx`).
+  - **4090**, 25 GB, ran Track 2. **Shared with another user's job** — check
+    `nvidia-smi --query-compute-apps` before blaming your code for a stall. Light jobs get
+    cycles under contention; autoregressive generation may not.
+    Paths: `/media/user/2tb/motion_data`, `/home/user/Khiem/T2M-GPT`.
+  - **3090**, 24 GB, not shared, ran Track 1. Env vars in `~/.wander_env` (source
+    explicitly — non-interactive shells miss it). The `afford` conda env was raw-copied
+    from the 4090, so bare `pip` is broken; use `~/anaconda3/envs/afford/bin/python -m pip`.
+    Paths: `~/wander_data/motion_data`, `~/Khiem/T2M-GPT`, repo `~/Khiem/wanderscript-text-to-motion`.
+  - **Network**: both boxes are behind an upstream **per-TCP-flow rate limit (~10-30 KB/s
+    per connection)**, not fixable locally. `git clone`/`curl` crawl while browsers feel
+    fine. For anything large, rsync from the other box over the Tailscale direct path
+    (~10 MB/s). This repo is tiny, so `git pull`/`push` is unaffected.
 - Benchmarks: PSMo + AffordMotion (reported HUMANISE numbers; PSMo has no public code, so
   state test-protocol differences honestly). SceMoS is related work only — it reports on
   TRUMANS, a different dataset; no numeric comparison.
