@@ -194,18 +194,19 @@ placement code itself is right (a bug here would show up as nonzero
 start-error). The real signal is goal-error, compared between the two
 models below.
 
-### Training — in progress
+### Training (final, post-fix — see bug note below for the discarded first pass)
 Both models finetune from the pretrained transformer checkpoint, 4000
-iterations, batch size 64, lr 1e-4, on the full 16523-clip train split.
-Launched sequentially (unconditioned first, required-baseline priority, then
-conditioned) in the background; this section will be filled in with final
-train loss/accuracy as each finishes.
+iterations, batch size 64, lr 1e-4, on the full 16523-clip train split,
+correctly-normalized tokens. Sequential (unconditioned first, then
+conditioned), ~25 min each on the 3090.
 
-- **Unconditioned: DONE.** 4000/4000 iters, final loss 0.70, token-accuracy
-  76.1% (climbed from a loss ~8.9 cold-start on `cond_emb`, as expected for
-  finetuning an otherwise-converged pretrained model with one
-  freshly-initialized-ish input layer). ~28 min wall-clock on the 3090.
-- Conditioned: running now (sequential after unconditioned, same box).
+- **Unconditioned**: final loss 0.909, token-accuracy 76.95%.
+- **Conditioned**: final loss 0.879, token-accuracy 77.48%.
+
+(A first training pass, run before the normalization bug below was found,
+gave 0.70/76.1% and 0.67/76.9% respectively — similar shape, different exact
+numbers since the tokens themselves changed. Discarded along with everything
+downstream of it.)
 
 ### Bug found + fixed: normalization pitfall, again
 First full eval run gave nonsensical goal-errors (~93m mean, both models,
@@ -235,7 +236,83 @@ checkpoints, and the eval numbers above them — redoing data prep, both
 training runs, and eval with the fix in place. (Same class of bug, same
 project; adding to the pattern already noted in CLAUDE.md 3.)
 
-### Probe eval — redoing after the fix above
-Re-extracting tokens with correct normalization, then retraining both
-models from the pretrained checkpoint again (same hyperparameters), then
-re-evaluating. Will report final numbers here once done.
+### Probe eval — final numbers
+
+200 held-out test clips per model (same 200, fixed seed, for a fair
+comparison), greedy generation, SE(2)-placed at the fed start pose.
+
+| | goal-error mean | goal-error median | goal-error std | start-error |
+|---|---|---|---|---|
+| **unconditioned** | 0.8285 m | 0.5255 m | 0.8168 m | 0.0 (exact) |
+| **conditioned** | 0.8224 m | 0.5172 m | 0.8023 m | 0.0 (exact) |
+
+Start-error is exactly 0.0 for both, as expected (see the sanity-check note
+above — confirms the placement code, not a model result).
+
+**The goal-error difference (0.006m mean) is not meaningful.** With n=200
+and std~0.8m, the standard error of the mean is ~0.057m — the observed gap
+is roughly 1/10th of that, i.e. indistinguishable from noise. Conditioning
+did not measurably reduce goal-error.
+
+**Context that makes this worse, not better, for the "grounding works"
+case**: mean start-to-goal distance over the test set is only **0.645m**
+(median 0.383m) — *smaller* than the goal-error either model achieves. A
+trivial "don't move from start" policy would score ~0.645m mean error,
+**beating both trained models**. Neither model is actually solving the
+task in an absolute sense, goal-conditioned or not.
+
+**Visual confirmation** (`wander_data/track1_probe/renders/{conditioned,
+unconditioned}/example_*.png`, not committed per `.gitignore` — data/
+renders stay off git): spot-checked several examples side by side. E.g.
+"walk to the chair" — fed goal is ~1.3m to the left of the fed start;
+*both* models generate the same short trajectory curving away from the
+fed start, in the same wrong direction, missing the goal by ~1.5m each.
+"walk to the door that is in the center o[f...]" — fed goal ~0.7m to the
+lower-right; both models generate near-identical short paths to the
+upper-left instead. The conditioned model's trajectory is not
+distinguishably different from the unconditioned one on any inspected
+example — it is not visibly using the goal coordinate at all.
+
+### Decision gate verdict: FAILS — grounding is the real bottleneck
+
+Per `001_grounding_probe.md`'s explicit gate: conditioning must produce a
+*meaningfully lower* goal-error than the unconditioned baseline, or the
+probe fails even if absolute numbers look fine. It failed: the two are
+statistically indistinguishable, and neither beats a trivial stay-in-place
+baseline. This is exactly the "Watch item" the spec called out in advance —
+canonicalized targets giving a weak gradient toward absolute position, and
+the model producing plausible-looking motion that ignores the fed goal.
+
+**This is a genuine finding, not a data/implementation-quality problem**:
+- The bug found and fixed above was real and would have produced a false
+  "grounding works" signal by pure coincidence if left in (both un-normalized
+  numbers happened to be ~93m, similarly uninformative) — but once fixed,
+  the result is clean, the sanity check (start-error) is exact, and the
+  pattern (conditioned ≈ unconditioned, both ≈ or worse than trivial) is
+  consistent across the aggregate statistics AND individual-example renders.
+- Both models trained normally (loss dropped from ~9 to ~0.9, accuracy
+  climbed to ~77%) — this is not an undertrained-model artifact. The
+  conditioned model *did* learn something (very slightly better held-out
+  token-accuracy, 77.48% vs 76.95%) — it just isn't translating into
+  better absolute goal-reaching, consistent with the "weak signal toward
+  absolute position" mechanism CLAUDE.md called out in advance (2a, section
+  5 risk #2).
+
+**Per the spec's own reconciliation table (`docs/REPORT_aug9.md`)**: Track 1
+fails → grounding is the real problem, independent of whatever Track 2 (the
+tokenizer finetune) finds. Pivot candidate per `001_grounding_probe.md`:
+predict root trajectory explicitly first, then generate motion along it,
+rather than asking the transformer to infer absolute position purely from a
+concatenated conditioning vector.
+
+**Not investigated further here** (out of this probe's scope, flagged for
+whoever picks this up next): whether a stronger conditioning mechanism
+(e.g. separate prefix tokens instead of one shared vector, larger weight on
+the start/goal loss, more training iterations, or explicit auxiliary
+position-prediction supervision) would change this result. The probe's job
+was to test the specific mechanism CLAUDE.md 2b describes ("learned
+embeddings concatenated to its input"), and that mechanism, implemented as
+literally as possible, does not ground.
+
+**STOPPING HERE per instructions — not merging this branch.** Reporting
+this verdict for reconciliation against Track 2's results.
