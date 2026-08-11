@@ -125,5 +125,88 @@ Matches within RNG/rounding noise across the board.
 
 ## Grounding probe (001_grounding_probe.md)
 
-Not started yet — will log data-prep, smoke numbers, and per-model
-goal-error/start-error here incrementally as each stage completes.
+### Data prep — done
+- Reused HUMANISE's own official `train.txt`/`test.txt` split rather than
+  inventing a new one: **16523 train / 3125 test** clips, 0 skipped (all
+  clips had >=8 raw frames).
+- Per clip: tokens from the FROZEN VQ-VAE (`net.encode`), start pose
+  `(x, y, sin(yaw), cos(yaw))` at frame 0 and goal `(x, y)` at the last frame
+  actually covered by the tokenized target (see frame-alignment note in
+  `scripts/track1/prepare_probe_data.py` docstring — `process_file` drops
+  the last raw frame when computing velocities, so goal is read at the
+  263-dim sequence's own last index, not the raw clip's), both from
+  `humanise_join.compute_track2`'s world-frame track. Text = HUMANISE's own
+  per-clip utterance (e.g. "sit on the coffee table that is between the
+  bench and the end table").
+- Token length distribution: 7-32 tokens/clip, comfortably inside the
+  pretrained transformer's 50-motion-token budget (`block_size=51`) — no
+  clips needed truncation.
+- Output: `wander_data/track1_probe/tokens/{train,test}.pkl`.
+
+### Model design
+Per CLAUDE.md 2b: "start pose + goal coordinate, as learned embeddings
+concatenated to its input." Implemented as literally as possible with zero
+architecture surgery: T2M-GPT's `Text2Motion_Transformer` (imported
+unmodified) already prepends one condition token, built by projecting a
+`clip_dim`-wide vector through `cond_emb: Linear(clip_dim, embed_dim)`.
+- **Unconditioned baseline** (required by the spec): `clip_dim=512`, exactly
+  vanilla — CLIP ViT-B/32 text feature only. Loads the pretrained transformer
+  checkpoint `strict=True`, full warm start.
+- **Conditioned**: `clip_dim=518` = 512 (CLIP text) + 4 (start x,y,sin,cos)
+  + 2 (goal x,y). The concatenation happens in feature space, before the
+  existing `cond_emb` — no new modules, no sequence-length/block_size
+  changes. Start/goal (x,y) are normalized using train-set mean/std (sin/cos
+  left as-is, already unit-scale) before concatenation.
+- Pretrained-checkpoint compatibility: conditioned `cond_emb`'s input width
+  (518) doesn't match the pretrained checkpoint's (512), so it can't be
+  strict-loaded. Warm-started instead: pretrained `cond_emb` weight copied
+  into the first 512 columns of the wider layer (extra 6 columns keep their
+  fresh N(0, 0.02) init); bias copied directly. Everything else in the
+  transformer (9 blocks, both trans_base and trans_head, embeddings, output
+  head) loads `strict=True`/unchanged in both variants.
+- Deliberate deviation from CLAUDE.md 2c's mention of T5 text conditioning:
+  used CLIP ViT-B/32 instead, matching what's already integrated and
+  pretrained in this exact T2M-GPT codebase/checkpoint. The probe's question
+  (does start/goal conditioning work) is orthogonal to text-encoder choice,
+  and swapping to T5 would mean losing the pretrained cond_emb warm-start
+  and downloading a new frozen encoder over this box's throttled network
+  for no benefit to what's being tested.
+- Exact architecture (from the pretrained checkpoint's own run.log, not
+  generic argparse defaults): `nb_code=512, embed_dim_gpt=1024, block_size=51,
+  num_layers=9, n_head_gpt=16, down_t=2`. Training corruption rate `pkeep=0.5`
+  carried over unchanged from the pretrained recipe
+  ("VQTransformer_corruption05").
+
+### SE(2) placement (probe eval)
+New utility (`scripts/track1/se2_utils.py`), reusing validated code wherever
+possible: `motion_features.recover_positions` (already-validated inverse
+263->joint-positions) gives the generated clip's LOCAL root trajectory,
+which starts at local origin at frame 0 by construction of the
+representation. `se2_utils` adds only the small missing glue — undoing the
+Y-up axis relabel and composing the local (x,y) trajectory onto the fed
+world start pose via a rigid rotate+translate.
+
+**Sanity check confirmed during smoke testing**: `start_err = 0.0` exactly,
+for both models, on every clip. This is expected and correct, not a result —
+placement composes frame 0 onto the fed start pose by construction, so it
+can't be anything else regardless of what the model learned. It confirms the
+placement code itself is right (a bug here would show up as nonzero
+start-error). The real signal is goal-error, compared between the two
+models below.
+
+### Training — in progress
+Both models finetune from the pretrained transformer checkpoint, 4000
+iterations, batch size 64, lr 1e-4, on the full 16523-clip train split.
+Launched sequentially (unconditioned first, required-baseline priority, then
+conditioned) in the background; this section will be filled in with final
+train loss/accuracy as each finishes.
+
+- Unconditioned: iter 100/4000, loss 1.70, token-accuracy 52.15% (climbing
+  fast from a loss ~8.9 cold-start on `cond_emb`, as expected for finetuning
+  an otherwise-converged pretrained model with one freshly-initialized-ish
+  input layer).
+- Conditioned: not started yet (sequential after unconditioned).
+
+### Probe eval — not started yet
+Will report goal-error/start-error (mean/median, conditioned vs
+unconditioned) and example renders here once both models finish training.
