@@ -89,8 +89,14 @@ Stage A — **VQ-VAE (motion tokenizer) joint finetune.**
   uniform moderate degradation, not a broken subset) — but "3.09x, moderately worse" is a
   materially weaker claim than the original "5.1x, structurally broken." A general-motion
   paper still needs interaction, so the codebook still needs to cover it, but the magnitude
-  of the original justification should not be quoted as-is. See docs/STEP1_plumbing.md
-  Check 3 for the full before/after and the visual evidence.
+  of the original justification should not be quoted as-is. See
+  docs/old_docs_aug8/STEP1_plumbing.md Check 3 for the full before/after and the visual
+  evidence.
+  **These figures are superseded — the 45.3mm baseline is LEAKED (see section 3).** The
+  held-out numbers are: H3D 56.11, walk 50.20, stand-up 66.98, sit 69.55, lie 136.91. The
+  shape of the finding is unchanged; the reference point moves.
+- **DONE 2026-08-12** — this finetune has been run and it worked: lie 136.9 -> 96.3mm, no
+  forgetting. Numbers and method in section 3 and `docs/RECONCILIATION_aug12.md`.
 - How: finetune jointly on **HumanML3D + HUMANISE**, balanced sampling (HumanML3D 14.6k
   vs HUMANISE 19.6k — weight so neither dominates; HUMANISE-only would cause catastrophic
   forgetting of general motion).
