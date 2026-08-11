@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
-Grounding probe data prep (docs/track_1/001_grounding_probe.md, "Data prep").
+Grounding probe data prep (docs/04_grounding.md).
+
+Also serves build-order step 5, token re-extraction: pass --ckpt with the
+finetuned VQ-VAE and a fresh --tokens-dir. Tokens are indices into a specific
+codebook, so a finetuned tokenizer invalidates every previously extracted
+token, and using stale ones fails silently rather than loudly (CLAUDE.md 2b).
 
 For every HUMANISE clip in the official train/test split (HUMANISE/train.txt,
 test.txt -- reused as-is rather than inventing a new split), extracts:
-  - motion tokens from the FROZEN T2M-GPT VQ-VAE (net.encode)
+  - motion tokens from the VQ-VAE (net.encode)
   - start pose (x, y, sin(yaw), cos(yaw)) at the first frame and goal (x, y)
     at the last frame, from the world-frame track (humanise_join.compute_track2)
   - the clip's text utterance (for CLIP conditioning)
@@ -21,6 +26,7 @@ Output: one pickle per split under WANDER_MOTION_DATA_ROOT/../track1_probe/token
 (a list of dicts: index, tokens (int64 array), start (float32 (4,)),
 goal (float32 (2,)), text (str), action (str)).
 """
+import argparse
 import os
 import pickle
 import sys
@@ -42,7 +48,6 @@ OUT_DIR = os.environ.get(
     os.path.join(os.path.dirname(os.environ.get("WANDER_MOTION_DATA_ROOT",
                  "/media/user/2tb/motion_data")), "track1_probe"),
 )
-TOKENS_DIR = os.path.join(OUT_DIR, "tokens")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_T = 196  # same convention as scripts/verify/check14_mpjpe_evaluator_norm.py
 
@@ -106,15 +111,30 @@ def process_split(name, net, mean, std):
 
 
 def main():
-    os.makedirs(TOKENS_DIR, exist_ok=True)
-    net = load_vqvae(device=DEVICE)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ckpt", default=None,
+                    help="VQ-VAE checkpoint to tokenize with. Default: the frozen "
+                         "pretrained one. Pass the finetuned checkpoint to re-extract "
+                         "after Stage A (CLAUDE.md 2b strict ordering).")
+    ap.add_argument("--tokens-dir", default=os.path.join(OUT_DIR, "tokens"),
+                    help="output dir. Use a DIFFERENT dir per tokenizer -- tokens from "
+                         "one codebook are meaningless to another, and silently so.")
+    args = ap.parse_args()
+
+    os.makedirs(args.tokens_dir, exist_ok=True)
+    net = load_vqvae(ckpt_path=args.ckpt, device=DEVICE) if args.ckpt else load_vqvae(device=DEVICE)
+    # Normalization stays the frozen checkpoint's own meta mean/std even for the
+    # finetuned tokenizer: the finetune warm-started from that embedding space and
+    # trained in it throughout (docs/03_tokenizer_finetune.md), so its encoder still
+    # expects it. Recomputing stats here would put the encoder out of distribution.
     mean = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/mean.npy").astype(np.float32)
     std = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/std.npy").astype(np.float32)
-    print(f"VQ-VAE loaded on {DEVICE}, using evaluator-consistent mean/std")
+    print(f"VQ-VAE loaded on {DEVICE} from {args.ckpt or 'frozen pretrained'}, "
+          f"evaluator-consistent mean/std -> {args.tokens_dir}")
 
     for split in ["train", "test"]:
         data = process_split(split, net, mean, std)
-        out_path = os.path.join(TOKENS_DIR, f"{split}.pkl")
+        out_path = os.path.join(args.tokens_dir, f"{split}.pkl")
         with open(out_path, "wb") as f:
             pickle.dump(data, f)
         print(f"wrote {out_path} ({len(data)} clips)")

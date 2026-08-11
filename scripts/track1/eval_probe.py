@@ -69,14 +69,18 @@ def main():
     ap.add_argument("--n-clips", type=int, default=200)
     ap.add_argument("--n-renders", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--tokens-dir", type=str, default=TOKENS_DIR)
+    ap.add_argument("--vqvae-ckpt", type=str, default=None,
+                    help="VQ-VAE to decode with. MUST be the same one --tokens-dir was "
+                         "extracted with, or every number here is meaningless.")
     args = ap.parse_args()
 
-    with open(os.path.join(TOKENS_DIR, "test.pkl"), "rb") as f:
+    with open(os.path.join(args.tokens_dir, "test.pkl"), "rb") as f:
         test_manifest = pickle.load(f)
     rng = np.random.RandomState(args.seed)
     idxs = rng.choice(len(test_manifest), size=min(args.n_clips, len(test_manifest)), replace=False)
 
-    net = load_vqvae(device=DEVICE)
+    net = load_vqvae(ckpt_path=args.vqvae_ckpt, device=DEVICE) if args.vqvae_ckpt else load_vqvae(device=DEVICE)
     net.eval()
     mean = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/mean.npy").astype(np.float32)
     std = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/std.npy").astype(np.float32)

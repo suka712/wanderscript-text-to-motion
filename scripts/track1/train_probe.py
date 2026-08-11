@@ -189,6 +189,9 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--print-iter", type=int, default=100)
     ap.add_argument("--out-name", type=str, default=None)
+    ap.add_argument("--tokens-dir", type=str, default=TOKENS_DIR,
+                    help="token dir from prepare_probe_data.py. MUST match the tokenizer "
+                         "the model will be decoded with -- tokens are codebook-specific.")
     args = ap.parse_args()
 
     tag = f"conditioned-{args.cond_mode}" if args.conditioned else "unconditioned"
@@ -196,7 +199,7 @@ def main():
     ckpt_dir = os.path.join(OUT_DIR, "checkpoints", out_name)
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    with open(os.path.join(TOKENS_DIR, "train.pkl"), "rb") as f:
+    with open(os.path.join(args.tokens_dir, "train.pkl"), "rb") as f:
         train_manifest = pickle.load(f)
     print(f"train manifest: {len(train_manifest)} clips")
 
@@ -277,7 +280,7 @@ def main():
     with open(os.path.join(ckpt_dir, "norm_stats.json"), "w") as f:
         json.dump({"cond_mean": cond_mean.tolist(), "cond_std": cond_std.tolist(),
                    "cond_mode": args.cond_mode, "conditioned": args.conditioned,
-                   "clip_dim": clip_dim}, f)
+                   "clip_dim": clip_dim, "tokens_dir": args.tokens_dir}, f)
     print(f"saved {ckpt_path}")
 
 
