@@ -95,8 +95,18 @@ def main():
             ns = json.load(f)
         conditioned = ns["conditioned"]
         cond_mode = ns.get("cond_mode", "abs")
-        cond_mean = np.array(ns.get("cond_mean", []), dtype=np.float32)
-        cond_std = np.array(ns.get("cond_std", []), dtype=np.float32)
+        if "cond_mean" in ns:
+            cond_mean = np.array(ns["cond_mean"], dtype=np.float32)
+            cond_std = np.array(ns["cond_std"], dtype=np.float32)
+        else:
+            # Back-compat with the original absolute-frame run, which stored
+            # only xy stats and applied them to start[:2] and goal, leaving
+            # start's sin/cos untouched. Reconstruct the equivalent 6-dim form
+            # so that checkpoint stays evaluable against the new controls.
+            xm = np.array(ns["xy_mean"], dtype=np.float32)
+            xs = np.array(ns["xy_std"], dtype=np.float32)
+            cond_mean = np.concatenate([xm, [0.0, 0.0], xm]).astype(np.float32)
+            cond_std = np.concatenate([xs, [1.0, 1.0], xs]).astype(np.float32)
 
         trans_encoder = build_transformer(ns["clip_dim"])
         trans_encoder.load_state_dict(

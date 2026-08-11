@@ -1,5 +1,39 @@
 # Track 1 — RESULTS
 
+> ## ⚠️ THE VERDICT BELOW IS WITHDRAWN. GROUNDING WORKS.
+>
+> Retracted 2026-08-12 in orchestrator review. Do not act on the "FAILS → pivot to
+> trajectory-first" conclusion at the bottom of this file. **Read
+> `docs/RECONCILIATION_aug12.md` instead.** Corrected result: goal-error **0.164 m**
+> against a 0.124 m oracle floor and a 0.490 m unconditioned baseline — a 67% reduction,
+> ~9 SEM. Conditioning grounds.
+>
+> Two things were wrong, both fixed in commit `8240d3e`:
+>
+> 1. **A 90° error in `se2_place`.** The canonicalized frame-0 heading is +Z in
+>    HumanML3D's Y-up frame = −Y in the Z-up world frame (yaw −π/2), while
+>    `compute_track2` uses yaw 0 = +X. Placement must rotate by `yaw0 + π/2`. Every
+>    generated trajectory was placed 90° off. Ground-truth-token oracle on 200 held-out
+>    clips: **0.862 m as shipped, 0.124 m at +90°** — i.e. the bug alone accounted for
+>    essentially all of the 0.828/0.822 m "model" error reported below. The renders
+>    described below as models "walking in the wrong direction" are that rotation.
+> 2. **The goal was fed in absolute world coordinates.** The model generates in a frame
+>    whose origin and heading are the start pose, so using absolute coords requires
+>    computing `R(yaw₀)ᵀ(goal − start)` — bilinear — from a single `Linear`, which cannot
+>    represent a rotation. Fixing only the metric leaves conditioning still useless
+>    (0.515 m vs 0.490 m unconditioned). Feeding the goal start-relative and
+>    heading-aligned (`--cond-mode rel`) is what works.
+>
+> **The process lesson, which matters more than the result:** the only sanity check this
+> track ran was start-error, which is exactly 0.0 under *any* rotation and therefore could
+> not detect the bug. The report notes it "can't be anything else" and then cites it as
+> evidence the placement code is correct. A ground-truth oracle *was* run during debugging
+> and returned 0.46 m against a mean start-to-goal distance of 0.63 m; that should have
+> halted the run, but was read as a leftover normalization effect. Every measurement gets
+> an oracle control, and an oracle that is not near-perfect means you have no measurement.
+>
+> Everything below is preserved unedited as the record of what was run.
+
 Branch: `track1-grounding` · Box: 3090 (fresh clone) · Updated: 2026-08-11
 
 Progress logged incrementally per the setup/probe specs, not just a final summary.
