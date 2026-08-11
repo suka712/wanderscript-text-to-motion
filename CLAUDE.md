@@ -8,7 +8,7 @@ to fail. Step specs are separate and disposable; this file is not.
 works (2b, section 3); grounding probe done and it **passes** (2f). Next action is
 build-order step 5: re-extract tokens with the finetuned VQ-VAE. The only remaining
 research risk is chaining. Full reconciliation of the two diagnostic tracks:
-`docs/RECONCILIATION_aug12.md` — read it if you are picking this up cold.
+`docs/` — one numbered file per completed stage; start at `docs/README.md`.
 
 A note on epistemic status: several original assumptions turned out wrong (a frozen
 tokenizer was assumed sufficient; cross-segment chaining was assumed trivial). Both were
@@ -78,7 +78,7 @@ Stage A — **VQ-VAE (motion tokenizer) joint finetune.**
   139.8 etc.; those were leaked and/or mis-normalized — see section 3.)
 - **DONE 2026-08-12 and it worked**: joint finetune on HumanML3D + HUMANISE, 1:1 balanced
   sampling, lr 2e-5, 20k iters. Lie 136.9 -> 96.3mm, every category improved, H3D held-out
-  flat. Numbers and method in section 3 and `docs/RECONCILIATION_aug12.md`. This result is
+  flat. Numbers and method in `docs/03_tokenizer_finetune.md`. This result is
   reportable, not just a gate.
 
 Stage B — **Transformer finetune (conditional continuation).**
@@ -93,7 +93,7 @@ Stage B — **Transformer finetune (conditional continuation).**
      **VALIDATED — see 2f.** Note what is NOT fed: the absolute start pose. In the start
      frame it is (0,0) at heading 0 by construction, so it carries no information; it
      enters at inference only, as the SE(2) placement. Feeding absolute world coordinates
-     instead does not work — measured, see 2a and RECONCILIATION_aug12.md.
+     instead does not work — measured, see 2a and `docs/04_grounding.md`.
   2. **Conditional continuation for chaining.** The transformer is trained to generate a
      segment CONDITIONED ON THE TAIL of the previous segment (prefix = last N tokens / last
      pose of segment k-1). This is what makes chaining actually work — see 2d. This is a
@@ -166,12 +166,12 @@ goal-following**, which is the argument for taking Stage A's finetune.
 
 Do NOT overclaim: single-segment, no chaining, no scene features, in-distribution goals
 only. Retires the goal-grounding risk; says nothing about chaining (risk #1). Detail:
-`docs/RECONCILIATION_aug12.md`.
+`docs/04_grounding.md`.
 
 ---
 
 ## 3. What is validated so far (do not redo, do not re-litigate)
-From completed verification work (STEP1/STEP1b):
+From the data pipeline (`docs/01_data_pipeline.md`):
 - **Data join:** ID-join across HUMANISE's three sources (pure_motion / align_data /
   contact_motion) is 19,648/19,648 = 100%, at full scale.
 - **263-dim conversion:** built by REUSING HumanML3D's own feature extractor (not
@@ -188,7 +188,7 @@ From completed verification work (STEP1/STEP1b):
   handle them.
 - **Scene meshes:** all 643 HUMANISE ScanNet meshes load fine (trimesh).
 
-- **Reconstruction-FID calibration (STEP2 Task 2):** done. FID 0.066 ± .001 vs paper's
+- **Reconstruction-FID calibration** (`docs/02_baseline_calibration.md`): done. FID 0.066 ± .001 vs paper's
   0.070 ± .001, R@1-3 all within variance — harness and checkpoint confirmed trustworthy.
 - **Reconstruction canary, corrected normalization:** the frozen VQ-VAE's own checkpoint
   has a specific expected mean/std (`checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/`)
@@ -197,7 +197,7 @@ From completed verification work (STEP1/STEP1b):
   baseline MPJPE alone dropped 137.3mm -> 45.3mm when corrected). See the Stage A note in
   section 2b above for the corrected per-category numbers.
 
-From the two diagnostic tracks (`docs/RECONCILIATION_aug12.md`, 2026-08-12):
+From the two diagnostic tracks (2026-08-12; `docs/03_tokenizer_finetune.md`, `docs/04_grounding.md`):
 - **Tokenizer joint finetune works.** HUMANISE lie 136.9 -> 96.3 mm, sit 69.6 -> 47.6,
   stand 67.0 -> 53.0, walk 50.2 -> 34.1; H3D held-out flat 56.11 -> 56.2. The sit/lie gap
   was real codebook coverage, NOT the upstream SMPL-X -> 22-joint step. Final checkpoint:
@@ -215,14 +215,14 @@ From the two diagnostic tracks (`docs/RECONCILIATION_aug12.md`, 2026-08-12):
   (`prepare_quantizer_for_finetune`).
 
 Bug ledger — four silent frame/normalization bugs so far, all the same shape (a convention
-mismatch that degrades a number without crashing anything): Z-up vs Y-up (STEP1); wrong
-mean/std in the MPJPE canary (STEP2); the same normalization error again in Track 1's
+mismatch that degrades a number without crashing anything): Z-up vs Y-up; wrong
+mean/std in the MPJPE canary; the same normalization error again in the grounding probe's
 encode/decode; and the 90° SE(2) error in 2a. The last two were caught only after
 producing published numbers, and the last inverted a track's conclusion. See risk #2.
 
-Still outstanding from STEP2 (not blocking anything):
+Still outstanding from baseline calibration (not blocking anything):
 - T2M-GPT generation FID/R-precision reproduction (Task 1) — root-caused to a self-inflicted
-  timeout, not GPU contention; see `docs/old_docs_aug8/STEP2_baseline_calibration.md`
+  timeout, not GPU contention; see `docs/archive/STEP2_baseline_calibration.md`
   before re-attempting. Reconstruction FID is calibrated and that is what the tracks needed.
 
 ---
@@ -280,13 +280,12 @@ everything else is engineering plus discipline about measurement (#2).
 ---
 
 ## 6. Build order
-1. ~~Verify plumbing~~ DONE (STEP1/1b).
-2. ~~Baseline calibration~~ DONE for reconstruction (FID 0.066 vs paper 0.070, harness
-   trusted). Generation-FID reproduction is still open but blocks nothing — see section 3.
-3. ~~**VQ-VAE joint finetune**~~ DONE (Track 2, merged). Per-category reconstruction
-   validated held-out. **Tokens have NOT been re-extracted yet — that is step 5.**
-4. ~~**Grounding probe**~~ DONE and PASSED (Track 1, corrected — see 2f). Ran on the
-   FROZEN tokenizer, which was right: it isolated grounding from tokenizer quality.
+1. ~~Verify plumbing~~ DONE — `docs/01_data_pipeline.md`.
+2. ~~Baseline calibration~~ DONE for reconstruction — `docs/02_baseline_calibration.md`.
+3. ~~**VQ-VAE joint finetune**~~ DONE — `docs/03_tokenizer_finetune.md`. **Tokens have NOT
+   been re-extracted yet — that is step 5.**
+4. ~~**Grounding probe**~~ DONE and PASSED — `docs/04_grounding.md`. Ran on the FROZEN
+   tokenizer, which was right: it isolated grounding from tokenizer quality.
 
 **-> YOU ARE HERE. Next: step 5.**
 
