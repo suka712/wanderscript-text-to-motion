@@ -9,8 +9,8 @@ was established and how to reproduce it. Read in order; each assumes the ones be
 | [02](02_baseline_calibration.md) | Baseline calibration — harness trusted, frozen tokenizer characterized | DONE (reconstruction) |
 | [03](03_tokenizer_finetune.md) | Tokenizer joint finetune (Stage A) | DONE |
 | [04](04_grounding.md) | Grounding probe — explicit goal conditioning | DONE |
-| 05 | Re-extract tokens with the finetuned VQ-VAE | **NEXT** |
-| 06 | Transformer finetune — goal conditioning + conditional continuation | |
+| [05](05_token_reextraction.md) | Re-extract tokens with the finetuned VQ-VAE | DONE |
+| 06 | Transformer finetune — goal conditioning + conditional continuation | **NEXT** |
 | 07 | Chaining — the last open research risk | |
 | 08 | Collision-guided decoding | |
 | 09 | Qwen JSON end-to-end → ScanNet demo | |

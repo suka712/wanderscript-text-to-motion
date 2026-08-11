@@ -62,6 +62,10 @@ model/oracle ratio stays at 1.1–1.4 in every bin. Goal-following itself is sca
 what degrades at range is tokenizer trajectory reconstruction. That is a direct argument for
 carrying `03_tokenizer_finetune.md` forward: it raises exactly this ceiling.
 
+**It did.** Re-run on the finetuned tokenizer (`05_token_reextraction.md`), the oracle floor
+drops to 0.107 m and goal-error follows it to 0.132 m — with no change to the grounding
+mechanism at all.
+
 ## Method notes
 
 - **Model**: T2M-GPT's `Text2Motion_Transformer`, unmodified. The goal is concatenated to

@@ -282,20 +282,17 @@ everything else is engineering plus discipline about measurement (#2).
 ## 6. Build order
 1. ~~Verify plumbing~~ DONE — `docs/01_data_pipeline.md`.
 2. ~~Baseline calibration~~ DONE for reconstruction — `docs/02_baseline_calibration.md`.
-3. ~~**VQ-VAE joint finetune**~~ DONE — `docs/03_tokenizer_finetune.md`. **Tokens have NOT
-   been re-extracted yet — that is step 5.**
+3. ~~**VQ-VAE joint finetune**~~ DONE — `docs/03_tokenizer_finetune.md`.
 4. ~~**Grounding probe**~~ DONE and PASSED — `docs/04_grounding.md`. Ran on the FROZEN
    tokenizer, which was right: it isolated grounding from tokenizer quality.
+5. ~~**Re-extract tokens**~~ DONE and verified — `docs/05_token_reextraction.md`. Probe
+   re-run on the new tokenizer confirms goal-error tracks the lower oracle floor
+   (0.164 -> 0.132 m) with no change to the grounding mechanism.
 
-**-> YOU ARE HERE. Next: step 5.**
+**-> YOU ARE HERE. Next: step 6.**
 
-5. **Re-extract tokens with the finetuned VQ-VAE.** Mandatory before any transformer
-   training (2b strict ordering) — the finetuned codebook invalidates every token in
-   `track1_probe/tokens/`. Cheap; do not skip; do not train on the probe's tokens.
-6. **Transformer finetune** on the new tokens: relative-frame goal conditioning (proven,
-   2f) + conditional continuation (unproven, the real work). Single segment reaching the
-   goal from the correct start. Sanity check: rerun the probe eval on the new tokenizer
-   and confirm goal-error tracks the new (lower) oracle floor.
+6. **Transformer finetune** on `tokens_finetuned/`: relative-frame goal conditioning
+   (proven, 2f) + conditional continuation (unproven, the real work).
 7. **Chaining**: conditional continuation across segments + SE(2) rollout + seam blend.
    Two segments connect with continuous body pose. **This is the last real research risk.**
    Express the prefix in segment k+1's own start frame — same lesson as 2f.
