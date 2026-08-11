@@ -1,5 +1,12 @@
 # Progress Report — 2026-08-09
 
+> **SUPERSEDED 2026-08-12 by `RECONCILIATION_aug12.md`.** Both tracks proposed in §5 have
+> finished. Two numbers below are now known to be wrong and are corrected there:
+> the H3D baseline of 45.3mm was **leaked** (honest held-out figure: 56.11mm), and the
+> H3D-lie control of 90.1mm likewise (held-out: 117.5mm, n=11). The §5 reconciliation
+> table still applies; the row that fired is "grounding works + finetune improves."
+> Kept as the historical record of what was known on Aug 9.
+
 Consolidated record of achieved state. Supersedes STEP1_plumbing.md and
 STEP2_baseline_calibration.md.
 
