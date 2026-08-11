@@ -36,6 +36,7 @@ from humanise_join import build_flat_join, get_record, compute_track2  # noqa: E
 from vqvae_loader import load_vqvae  # noqa: E402
 
 HUMANISE_ROOT = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE")
+T2M_GPT_ROOT = os.environ.get("WANDER_T2M_GPT_ROOT", "/home/user/Khiem-ssh/T2M-GPT")
 OUT_DIR = os.environ.get(
     "WANDER_TRACK1_PROBE_ROOT",
     os.path.join(os.path.dirname(os.environ.get("WANDER_MOTION_DATA_ROOT",
@@ -56,7 +57,7 @@ def load_split(name):
         return [int(line.strip()) for line in f if line.strip()]
 
 
-def process_split(name, net):
+def process_split(name, net, mean, std):
     indices = load_split(name)
     out = []
     skipped = 0
@@ -71,9 +72,17 @@ def process_split(name, net):
             skipped += 1
             continue
         data263 = data263_full[:T].astype(np.float32)
+        # VQ-VAE was trained on normalized input (its own checkpoint mean/std,
+        # NOT raw H3D Mean.npy/Std.npy -- see check14's docstring / CLAUDE.md's
+        # "normalization pitfall"). Encoding raw data263 still produces *some*
+        # tokens (the encoder doesn't hard-fail on out-of-distribution scale),
+        # but they decode to badly wrong absolute trajectories -- confirmed via
+        # a ground-truth-token round-trip during eval debugging (~105m mean
+        # error un-normalized vs ~0.5m normalized on the same 10 clips).
+        norm = (data263 - mean) / std
 
         with torch.no_grad():
-            x = torch.from_numpy(data263).unsqueeze(0).to(DEVICE)
+            x = torch.from_numpy(norm).unsqueeze(0).to(DEVICE)
             tokens = net.encode(x)[0].cpu().numpy().astype(np.int64)
 
         record = get_record(idx)
@@ -99,10 +108,12 @@ def process_split(name, net):
 def main():
     os.makedirs(TOKENS_DIR, exist_ok=True)
     net = load_vqvae(device=DEVICE)
-    print(f"VQ-VAE loaded on {DEVICE}")
+    mean = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/mean.npy").astype(np.float32)
+    std = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/std.npy").astype(np.float32)
+    print(f"VQ-VAE loaded on {DEVICE}, using evaluator-consistent mean/std")
 
     for split in ["train", "test"]:
-        data = process_split(split, net)
+        data = process_split(split, net, mean, std)
         out_path = os.path.join(TOKENS_DIR, f"{split}.pkl")
         with open(out_path, "wb") as f:
             pickle.dump(data, f)

@@ -207,6 +207,35 @@ train loss/accuracy as each finishes.
   freshly-initialized-ish input layer). ~28 min wall-clock on the 3090.
 - Conditioned: running now (sequential after unconditioned, same box).
 
-### Probe eval — not started yet
-Will report goal-error/start-error (mean/median, conditioned vs
-unconditioned) and example renders here once both models finish training.
+### Bug found + fixed: normalization pitfall, again
+First full eval run gave nonsensical goal-errors (~93m mean, both models,
+room-scale space is a few meters) — the exact "normalization pitfall" this
+project has hit before (check14's docstring, CLAUDE.md 3), just in new code
+this time: the frozen VQ-VAE operates on 263-dim vectors normalized by its
+OWN checkpoint mean/std, and both `prepare_probe_data.py` (encode) and
+`eval_probe.py` (decode) were feeding/reading it raw, un-normalized data.
+
+Isolated with a ground-truth-token round trip (real extracted tokens,
+decoded + SE(2)-placed, checked against the same clip's own fed goal — this
+should be near-zero if the pipeline is correct, since it's not testing the
+transformer at all): un-normalized end-to-end gave ~105m mean error;
+denormalizing only the decode side (leaving the still-buggy un-normalized
+encode) already dropped it to 0.46m, confirming the decode-side omission was
+the dominant bug and pinning down exactly where to fix. Interesting
+secondary finding: the encoder is apparently fairly robust to
+out-of-distribution input scale (still landed on tokens that decode
+close to the true trajectory) — likely because per-frame reconstruction
+error (what MPJPE-style metrics measure) is far more forgiving than
+cumulative trajectory error (what goal-reaching needs), so a "small-ish"
+per-frame bias that looked tolerable in the wrong-normalization H3D MPJPE
+canary before (137mm vs 45mm, ~3x) compounds into meters of drift over even
+a few dozen frames once integrated. Fixed both sides properly rather than
+relying on that robustness. This invalidates the tokens, both trained
+checkpoints, and the eval numbers above them — redoing data prep, both
+training runs, and eval with the fix in place. (Same class of bug, same
+project; adding to the pattern already noted in CLAUDE.md 3.)
+
+### Probe eval — redoing after the fix above
+Re-extracting tokens with correct normalization, then retraining both
+models from the pretrained checkpoint again (same hyperparameters), then
+re-evaluating. Will report final numbers here once done.

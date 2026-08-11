@@ -38,6 +38,7 @@ from train_probe import build_transformer, CLIP_DIM_BASE  # noqa: E402
 MOTION_DATA_ROOT = os.environ.get("WANDER_MOTION_DATA_ROOT", "/media/user/2tb/motion_data")
 OUT_DIR = os.environ.get("WANDER_TRACK1_PROBE_ROOT", os.path.join(os.path.dirname(MOTION_DATA_ROOT), "track1_probe"))
 TOKENS_DIR = os.path.join(OUT_DIR, "tokens")
+T2M_GPT_ROOT = os.environ.get("WANDER_T2M_GPT_ROOT", "/home/user/Khiem-ssh/T2M-GPT")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -72,6 +73,8 @@ def main():
     idxs = rng.choice(len(test_manifest), size=min(args.n_clips, len(test_manifest)), replace=False)
 
     net = load_vqvae(device=DEVICE)
+    mean = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/mean.npy").astype(np.float32)
+    std = np.load(f"{T2M_GPT_ROOT}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/std.npy").astype(np.float32)
     clip_model, _ = clip.load("ViT-B/32", device=DEVICE, jit=False)
     clip_model.eval()
 
@@ -93,7 +96,8 @@ def main():
             tokens = trans_encoder.sample(cond, if_categorial=False)
             if tokens.numel() == 0:
                 continue
-            motion = net.forward_decoder(tokens)[0].cpu().numpy()  # (T', 263)
+            motion_norm = net.forward_decoder(tokens)[0].cpu().numpy()  # (T', 263), normalized space
+            motion = motion_norm * std + mean  # denormalize -- see prepare_probe_data.py's note
 
             world_xy = se2_place(motion, d["start"], mf)
             gen_start, gen_end = world_xy[0], world_xy[-1]
