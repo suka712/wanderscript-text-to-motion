@@ -30,9 +30,41 @@ def yup_to_zup(positions_yup: np.ndarray) -> np.ndarray:
     return out
 
 
+# Constant offset between the two yaw conventions in play. HumanML3D's
+# process_file canonicalizes frame 0 to face +Z in ITS Y-up frame ("All
+# initially face Z+"); under zup_to_yup_hml (y_hml = z_zup, z_hml = -y_zup)
+# that direction is -Y in the Z-up world frame, i.e. world yaw -pi/2. But
+# humanise_join.compute_track2 defines yaw = 0 as facing +X. So composing a
+# recovered local trajectory onto a world start pose must rotate by
+# (yaw0 + pi/2), not yaw0.
+#
+# Getting this wrong rotates every placed trajectory 90 degrees about the fed
+# start. It is invisible to a start-error check (frame 0 sits at the local
+# origin either way, so start-error is exactly 0.0 regardless) -- the only
+# control that catches it is a ground-truth-token round trip. Measured on 200
+# held-out clips: 0.862m mean end-point error at offset 0, 0.124m at +pi/2.
+CANONICAL_YAW_OFFSET = np.pi / 2
+
+
 def rot_z2d(theta: float) -> np.ndarray:
     c, s = np.cos(theta), np.sin(theta)
     return np.array([[c, -s], [s, c]], dtype=np.float64)
+
+
+def start_pose_rotation(start_pose) -> np.ndarray:
+    """SE(2) rotation taking the canonicalized LOCAL frame to the world frame,
+    for a clip placed at `start_pose` = (x0, y0, sin_yaw0, cos_yaw0)."""
+    _, _, s0, c0 = start_pose
+    return rot_z2d(np.arctan2(s0, c0) + CANONICAL_YAW_OFFSET)
+
+
+def world_to_local_xy(world_xy: np.ndarray, start_pose) -> np.ndarray:
+    """Inverse of se2_place: express a world (..., 2) point in the frame the
+    model actually generates in. Used to build start-relative, heading-aligned
+    goal conditioning (see train_probe.py --cond-mode rel)."""
+    x0, y0, _, _ = start_pose
+    R = start_pose_rotation(start_pose)
+    return (np.asarray(world_xy, dtype=np.float64) - np.array([x0, y0])) @ R
 
 
 def local_xy_trajectory(data263: np.ndarray, mf_module) -> np.ndarray:
@@ -49,9 +81,8 @@ def se2_place(data263: np.ndarray, start_pose, mf_module) -> np.ndarray:
     start_pose: (x0, y0, sin_yaw0, cos_yaw0). Returns world_xy (T, 2).
     """
     local_xy = local_xy_trajectory(data263, mf_module)
-    x0, y0, s0, c0 = start_pose
-    yaw0 = np.arctan2(s0, c0)
-    R = rot_z2d(yaw0)
+    x0, y0, _, _ = start_pose
+    R = start_pose_rotation(start_pose)
     return local_xy @ R.T + np.array([x0, y0])
 
 
@@ -63,9 +94,8 @@ def se2_place_full_body(data263: np.ndarray, start_pose, mf_module) -> np.ndarra
     """
     joints_yup = mf_module.recover_positions(data263)
     joints_zup = yup_to_zup(joints_yup)
-    x0, y0, s0, c0 = start_pose
-    yaw0 = np.arctan2(s0, c0)
-    R = rot_z2d(yaw0)
+    x0, y0, _, _ = start_pose
+    R = start_pose_rotation(start_pose)
     xy = joints_zup[..., :2] @ R.T + np.array([x0, y0])
     out = joints_zup.copy()
     out[..., :2] = xy
