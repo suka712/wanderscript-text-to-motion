@@ -53,3 +53,20 @@ def se2_place(data263: np.ndarray, start_pose, mf_module) -> np.ndarray:
     yaw0 = np.arctan2(s0, c0)
     R = rot_z2d(yaw0)
     return local_xy @ R.T + np.array([x0, y0])
+
+
+def se2_place_full_body(data263: np.ndarray, start_pose, mf_module) -> np.ndarray:
+    """Same composition as se2_place, but applied to the FULL (T, 22, 3)
+    joint set (all limbs), not just the pelvis xy -- for rendering an
+    animated body in world coordinates rather than just a root trajectory.
+    Z (height) is untouched by an SE(2) transform. Returns (T, 22, 3), Z-up.
+    """
+    joints_yup = mf_module.recover_positions(data263)
+    joints_zup = yup_to_zup(joints_yup)
+    x0, y0, s0, c0 = start_pose
+    yaw0 = np.arctan2(s0, c0)
+    R = rot_z2d(yaw0)
+    xy = joints_zup[..., :2] @ R.T + np.array([x0, y0])
+    out = joints_zup.copy()
+    out[..., :2] = xy
+    return out
