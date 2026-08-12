@@ -291,6 +291,136 @@ def do_tokenizer(out_dir, n):
         print(f"  tokenizer {action} done", flush=True)
 
 
+# --------------------------------------------------------------- step 8 model
+def do_step8(out_dir, n):
+    """The step-8 model (all conditioning) vs its no-scene ablation vs ground
+    truth. Both sit at the oracle, so these look near-identical -- that IS the
+    result: the metric has no headroom on this data (docs/08)."""
+    import clip
+    from train_probe import build_transformer, cond_extra
+    os.makedirs(out_dir, exist_ok=True)
+    root = os.path.expanduser("~/wander_data/step8")
+    test = pickle.load(open(os.path.join(root, "tokens", "test.pkl"), "rb"))
+    net = load_vqvae(ckpt_path=FT_CKPT, device=DEV); net.eval()
+    mean, std = _norm()
+    cm_, _ = clip.load("ViT-B/32", device=DEV, jit=False); cm_.eval()
+
+    models = {}
+    for nm in ["full", "noscene"]:
+        cd = os.path.join(root, "checkpoints", nm)
+        ns = json.load(open(os.path.join(cd, "norm_stats.json")))
+        tr = build_transformer(ns["clip_dim"])
+        tr.load_state_dict(torch.load(os.path.join(cd, "net_final.pth"), map_location="cpu")["trans"], strict=True)
+        models[nm] = (tr.eval().to(DEV), ns)
+
+    disp = np.array([np.linalg.norm(d["goal"] - d["start"][:2]) for d in test])
+    cand = np.where(disp > 1.0)[0]
+    picks = np.random.RandomState(7).choice(cand, size=min(n, len(cand)), replace=False)
+    for k, i in enumerate(picks):
+        d = test[int(i)]
+        panels = []
+        with torch.no_grad():
+            gt = torch.from_numpy(d["tokens"]).long().unsqueeze(0).to(DEV)
+            panels.append(("ground truth", se2_place_full_body(
+                net.forward_decoder(gt)[0].cpu().numpy() * std + mean, d["start"], mf)))
+            feat = cm_.encode_text(clip.tokenize([d["text"]], truncate=True).to(DEV)).float()
+            for nm in ["full", "noscene"]:
+                tr, ns = models[nm]
+                ex = torch.from_numpy(cond_extra(d, ns["cond_mode"],
+                    np.array(ns["cond_mean"], np.float32), np.array(ns["cond_std"], np.float32))).unsqueeze(0).to(DEV)
+                tk = tr.sample(torch.cat([feat, ex], -1), if_categorial=False)
+                if tk.numel() == 0:
+                    continue
+                m = net.forward_decoder(tk)[0].cpu().numpy() * std + mean
+                e = np.linalg.norm(se2_place(m, d["start"], mf)[-1] - d["goal"])
+                lab = "full (with scene)" if nm == "full" else "noscene (ablation)"
+                panels.append((f"{lab}  err={e:.2f}m", se2_place_full_body(m, d["start"], mf)))
+        if len(panels) < 3:
+            continue
+        allp = np.concatenate([p[1].reshape(-1, 3) for p in panels])
+        nf = max(p[1].shape[0] for p in panels)
+        fig = plt.figure(figsize=(15, 5.2))
+        lines, trails = [], []
+        for c, (lab, j) in enumerate(panels):
+            ax = fig.add_subplot(1, 3, c + 1, projection="3d")
+            _bounds(ax, allp)
+            ax.plot([d["goal"][0]], [d["goal"][1]], [0], "*", color="#d62728", ms=22)
+            tr_, = ax.plot([], [], [], "-", color="#444", lw=1.2)
+            ax.set_title(lab, fontsize=10); ax.tick_params(labelsize=5)
+            lines.append(_lines(ax)); trails.append(tr_)
+        fig.suptitle(f"[08] '{d['text'][:65]}'   ★ = fed goal", fontsize=11)
+        fig.tight_layout()
+
+        def update(f):
+            for (lab, j), ls, tr_ in zip(panels, lines, trails):
+                fi = min(f, j.shape[0] - 1)
+                _set(ls, j[fi])
+                tr_.set_data(j[:fi + 1, 0, 0], j[:fi + 1, 0, 1]); tr_.set_3d_properties(np.zeros(fi + 1))
+            return []
+        save(fig, update, nf, os.path.join(out_dir, f"step8_{k:02d}_clip{d['index']}.mp4"))
+        print(f"  step8 {k+1}/{len(picks)}", flush=True)
+
+
+# ------------------------------------------------------------ collision metric
+def do_collision(out_dir, n):
+    """Why the naive collision map is void and the tall map is not (docs/08).
+
+    Top-down, same trajectory over both maps, colliding frames marked red.
+    On sit/lie clips the naive map lights up constantly -- the person is on the
+    target furniture, which is the OBJECTIVE. The 0.9m map keeps walls only."""
+    os.makedirs(out_dir, exist_ok=True)
+    naive_dir = os.path.expanduser("~/wander_data/bev_cache")
+    tall_dir = os.path.expanduser("~/wander_data/bev_tall_cache")
+    test = pickle.load(open(os.path.expanduser("~/wander_data/step8/tokens/test.pkl"), "rb"))
+    net = load_vqvae(ckpt_path=FT_CKPT, device=DEV); net.eval()
+    mean, std = _norm()
+
+    by = {}
+    for i, d in enumerate(test):
+        by.setdefault(d["action"], []).append(i)
+    picks = []
+    for a in ["lie", "sit", "walk", "stand up"]:
+        idx = by.get(a, [])
+        picks += list(np.random.RandomState(8).choice(idx, size=min(max(1, n // 4), len(idx)), replace=False))
+
+    for k, i in enumerate(picks):
+        d = test[int(i)]
+        sid = get_record(int(d["index"])).scene
+        pn, pt = os.path.join(naive_dir, f"{sid}.npz"), os.path.join(tall_dir, f"{sid}.npz")
+        if not (os.path.exists(pn) and os.path.exists(pt)):
+            continue
+        zn, zt = np.load(pn), np.load(pt)
+        occ_n, occ_t, ext = zn["occ"].astype(float), zt["occ"].astype(float), zn["extent"]
+        with torch.no_grad():
+            tok = torch.from_numpy(d["tokens"]).long().unsqueeze(0).to(DEV)
+            w = se2_place(net.forward_decoder(tok)[0].cpu().numpy() * std + mean, d["start"], mf)
+        xmin, xmax, ymin, ymax = ext
+        H, W = occ_n.shape
+        col = np.clip(((w[:, 0] - xmin) / (xmax - xmin) * W).astype(int), 0, W - 1)
+        row = np.clip(((ymax - w[:, 1]) / (ymax - ymin) * H).astype(int), 0, H - 1)
+        hit_n, hit_t = occ_n[row, col] > .5, occ_t[row, col] > .5
+
+        fig, axes = plt.subplots(1, 2, figsize=(11, 5.6))
+        arts = []
+        for ax, occ, hit, lab in [(axes[0], occ_n, hit_n, f"naive map (0.12m)  collides {hit_n.mean()*100:.0f}%"),
+                                  (axes[1], occ_t, hit_t, f"tall map (0.9m)  collides {hit_t.mean()*100:.0f}%")]:
+            ax.imshow(occ, cmap="gray_r", origin="upper")
+            ax.plot(col, row, "-", color="#1f77b4", lw=1.4, alpha=.7)
+            dot, = ax.plot([], [], "o", ms=11)
+            ax.set_title(lab, fontsize=10); ax.axis("off")
+            arts.append((dot, hit))
+        fig.suptitle(f"[08] {d['action']} · '{d['text'][:52]}'\nred = frame counted as collision", fontsize=10)
+        fig.tight_layout()
+
+        def update(f):
+            for dot, hit in arts:
+                dot.set_data([col[f]], [row[f]])
+                dot.set_color("#d62728" if hit[f] else "#2ca02c")
+            return []
+        save(fig, update, len(w), os.path.join(out_dir, f"collision_{d['action'].replace(' ','')}_{k:02d}_clip{d['index']}.mp4"))
+        print(f"  collision {k+1}/{len(picks)}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -303,6 +433,10 @@ def main():
         do_seam(os.path.join(args.out, "07_continuation"), args.n)
     if "tokenizer" in args.modes:
         do_tokenizer(os.path.join(args.out, "03_tokenizer"), max(3, args.n // 2))
+    if "step8" in args.modes:
+        do_step8(os.path.join(args.out, "08_transformer"), args.n)
+    if "collision" in args.modes:
+        do_collision(os.path.join(args.out, "08_collision_metric"), args.n)
     print("done")
 
 

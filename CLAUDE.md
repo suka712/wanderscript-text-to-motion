@@ -4,14 +4,14 @@ Authoritative project document. Read fully every session before acting. This is 
 ground truth for goals, architecture, what is validated, and where the project is likely
 to fail. Step specs are separate and disposable; this file is not.
 
-**Status as of 2026-08-12.** Data pipeline validated; tokenizer finetune done and it
-works (2b, section 3); grounding probe done and it **passes** (2f). Next action is
-build-order step 5: re-extract tokens with the finetuned VQ-VAE. The only remaining
-research risk is chaining. Full reconciliation of the two diagnostic tracks:
-`docs/` — one numbered file per completed stage; start at `docs/README.md`.
-**If a job may be running or you are picking up cold, read `docs/IN_FLIGHT.md` FIRST** —
-it holds what is executing right now, where everything lives on disk, and the next concrete
-command. The numbered docs cover finished work only.
+**Status 2026-08-12.** Steps 1-8 done. Both original research bets passed: goal grounding
+works, conditional continuation works. **Next: step 9, chaining** — and it is the unlock, not
+just the next step (see 6). Nothing has been chained yet; no number here is comparable to
+published work yet.
+
+**Read `docs/IN_FLIGHT.md` FIRST** — running jobs, on-disk layout, next command.
+`docs/RESULTS.md` has every established number with the oracle it is quoted against. This
+file is authoritative for *what we are building*; RESULTS.md for *what is true*.
 
 A note on epistemic status: several original assumptions turned out wrong (a frozen
 tokenizer was assumed sufficient; cross-segment chaining was assumed trivial). Both were
@@ -79,14 +79,9 @@ Stage A — **VQ-VAE (motion tokenizer) joint finetune.**
 - What it is: the VQ-VAE encodes a motion clip into a sequence of discrete tokens (indices
   into a learned codebook) and decodes tokens back to motion. It is the vocabulary of
   motion the rest of the system speaks in.
-- Why finetune (not freeze): the off-the-shelf VQ-VAE is trained on HumanML3D only and
-  reconstructs HUMANISE interaction worse than locomotion — held-out MPJPE, frozen: H3D
-  56.11mm, walk 50.20, stand-up 66.98, sit 69.55, **lie 136.91**. (Older docs quote 45.3 /
-  139.8 etc.; those were leaked and/or mis-normalized — see section 3.)
-- **DONE 2026-08-12 and it worked**: joint finetune on HumanML3D + HUMANISE, 1:1 balanced
-  sampling, lr 2e-5, 20k iters. Lie 136.9 -> 96.3mm, every category improved, H3D held-out
-  flat. Numbers and method in `docs/03_tokenizer_finetune.md`. This result is
-  reportable, not just a gate.
+- Why finetune (not freeze): the off-the-shelf VQ-VAE reconstructs HUMANISE interaction far
+  worse than locomotion. **DONE and it worked** — lie 136.9 -> 96.3mm, every category
+  improved, H3D held-out flat. A reportable result, not just a gate. See RESULTS §3.
 
 Stage B — **Transformer finetune (conditional continuation).**
 - What it is: the autoregressive model (the "GPT" of T2M-GPT) that predicts a sequence of
@@ -100,14 +95,14 @@ Stage B — **Transformer finetune (conditional continuation).**
      **VALIDATED — see 2f.** Note what is NOT fed: the absolute start pose. In the start
      frame it is (0,0) at heading 0 by construction, so it carries no information; it
      enters at inference only, as the SE(2) placement. Feeding absolute world coordinates
-     instead does not work — measured, see 2a and `docs/04_grounding.md`.
+     instead does not work — measured, see 2a and RESULTS §4.
   2. **Conditional continuation for chaining.** The transformer is trained to generate a
      segment CONDITIONED ON THE TAIL of the previous segment (prefix = last N tokens / last
      pose of segment k-1). This is what makes chaining actually work — see 2d. This is a
      training-time change, not an inference trick; the model must LEARN to continue from an
      arbitrary ending pose.
 - Scene conditioning also enters here, as an occupancy crop in the segment's own start
-  frame (NOT DINOv2 features — see section 4 and `docs/06_scene_probe.md`).
+  frame (NOT DINOv2 features — see section 4 and RESULTS §6).
 - STRICT ORDERING: finetuning the VQ-VAE changes the codebook, which invalidates all
   previously extracted tokens. After Stage A you MUST re-extract tokens with the finetuned
   VQ-VAE, THEN train the transformer on those new tokens. Training the transformer on stale
@@ -140,7 +135,7 @@ teleport at the seam — feet slide, limbs snap. Placing the root correctly with
 position but not body configuration.
 
 The working approach: the transformer generates segment k+1 CONDITIONED ON THE TAIL of
-segment k. **VALIDATED — `docs/07_continuation_probe.md`.** Seam error 155.8 -> 71.2mm,
+segment k. **VALIDATED — RESULTS §7.** Seam error 155.8 -> 71.2mm,
 landing within 0.3mm of the oracle, so the conditioning extracts everything available.
 
 Three things the probe settled, all load-bearing for step 8:
@@ -177,72 +172,23 @@ conditional-continuation chaining + an interaction-capable tokenizer. Do not let
 project's success depend on this component.
 
 ### 2f. Grounding — VALIDATED (2026-08-12)
-Probe passed (frozen tokenizer, single segment, 200 held-out clips). Goal-error:
-**0.164 m relative-frame** vs 0.490 m unconditioned, 0.515 m absolute-frame, on a 0.124 m
-oracle floor (null = 0.627 m). Holds across displacement scale, with the model/oracle
-ratio flat at 1.1–1.4 — **goal accuracy is limited by tokenizer reconstruction, not
-goal-following**, which is the argument for taking Stage A's finetune.
-
-Do NOT overclaim: single-segment, no chaining, no scene features, in-distribution goals
-only. Retires the goal-grounding risk; says nothing about chaining (risk #1). Detail:
-`docs/04_grounding.md`.
+Explicit goal conditioning works: 0.164 m goal error against a 0.124 m oracle floor and a
+0.490 m unconditioned baseline, holding across displacement scale. Retires the goal-grounding
+risk. Says nothing about chaining. Numbers and caveats: `docs/RESULTS.md` §4-5.
 
 ---
 
-## 3. What is validated so far (do not redo, do not re-litigate)
-From the data pipeline (`docs/01_data_pipeline.md`):
-- **Data join:** ID-join across HUMANISE's three sources (pure_motion / align_data /
-  contact_motion) is 19,648/19,648 = 100%, at full scale.
-- **263-dim conversion:** built by REUSING HumanML3D's own feature extractor (not
-  hand-written), so the layout is guaranteed to match what the tokenizer expects. All
-  19,648 clips convert cleanly, 0 NaN/exceptions. (Verify the SMPL-X -> 22-joint mapping
-  once more at scale — a wrong joint mapping corrupts everything silently.)
-- **World-frame track:** reconstructed from pure_motion (SMPL-X translation+orientation) +
-  align_data rigid transform. Validated by overlaying trajectories on scene mesh floors
-  (150/150 scenes pass). This process caught and fixed a missing `scene_translation`
-  offset.
-- **Axis convention:** HUMANISE raw joint data is natively **Z-up** (empirically verified;
-  the original Y-up assumption was WRONG). World frame = ScanNet Z-up, yaw about Z.
-- **Data quality:** 2 NaN-corrupted files exist in the official HumanML3D release — skip/
-  handle them.
-- **Scene meshes:** all 643 HUMANISE ScanNet meshes load fine (trimesh).
+## 3. What is validated
 
-- **Reconstruction-FID calibration** (`docs/02_baseline_calibration.md`): done. FID 0.066 ± .001 vs paper's
-  0.070 ± .001, R@1-3 all within variance — harness and checkpoint confirmed trustworthy.
-- **Reconstruction canary, corrected normalization:** the frozen VQ-VAE's own checkpoint
-  has a specific expected mean/std (`checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/`)
-  that differs from the raw H3D data-prep `Mean.npy`/`Std.npy` used in the original Step 1
-  canary. Using the wrong one inflates error substantially for BOTH MPJPE and FID (H3D
-  baseline MPJPE alone dropped 137.3mm -> 45.3mm when corrected). See the Stage A note in
-  section 2b above for the corrected per-category numbers.
+**All of it is in `docs/RESULTS.md`** — per-stage numbers, the oracle each is quoted against,
+the five-entry bug ledger, and the gotchas that will bite again (VQ-VAE normalization, the
+leaked 45.3mm baseline, `QuantizeEMAReset` not surviving `load_state_dict`, the 0.9m collision
+threshold). Do not re-derive or re-litigate any of it here.
 
-From the two diagnostic tracks (2026-08-12; `docs/03_tokenizer_finetune.md`, `docs/04_grounding.md`):
-- **Tokenizer joint finetune works.** HUMANISE lie 136.9 -> 96.3 mm, sit 69.6 -> 47.6,
-  stand 67.0 -> 53.0, walk 50.2 -> 34.1; H3D held-out flat 56.11 -> 56.2. The sit/lie gap
-  was real codebook coverage, NOT the upstream SMPL-X -> 22-joint step. Final checkpoint:
-  `track2_checkpoints/track2_joint_finetune_run1/net_iter020000.pth` on the 4090.
-- **Grounding works** with relative-frame goal conditioning — see 2f.
-- **CORRECTION — the H3D baseline of 45.3 mm was LEAKED and must not be quoted.** check14
-  sampled from all of `new_joint_vecs`, including clips the frozen model trained on. The
-  honest held-out figure is **56.11 mm**; the H3D-lie control is **117.5 mm** (n=11, high
-  variance), not 90.1. Any "did general motion regress" check compares against 56.11.
-- **`QuantizeEMAReset` does not survive `load_state_dict`.** It keeps `init`, `code_sum`,
-  `code_count` as plain Python attributes, not registered buffers, so a `strict=True` load
-  restores the codebook tensor but leaves `init=False` — the first `train()` forward then
-  overwrites all 512 codes from one batch. Anyone resuming/finetuning this VQ-VAE must
-  seed the EMA accumulators from the loaded codebook first
-  (`prepare_quantizer_for_finetune`).
-
-Bug ledger — four silent frame/normalization bugs so far, all the same shape (a convention
-mismatch that degrades a number without crashing anything): Z-up vs Y-up; wrong
-mean/std in the MPJPE canary; the same normalization error again in the grounding probe's
-encode/decode; and the 90° SE(2) error in 2a. The last two were caught only after
-producing published numbers, and the last inverted a track's conclusion. See risk #2.
-
-Still outstanding from baseline calibration (not blocking anything):
-- T2M-GPT generation FID/R-precision reproduction (Task 1) — root-caused to a self-inflicted
-  timeout, not GPU contention; see `docs/archive/STEP2_baseline_calibration.md`
-  before re-attempting. Reconstruction FID is calibrated and that is what the tracks needed.
+Not yet established, and worth stating plainly: **nothing has been chained**, **scene
+conditioning's contribution is unmeasured** (untestable on HUMANISE — only 0.8% of clips walk
+>1.5m), and **generation FID is still unreproduced after 5 attempts**, so no number in this
+repo can be compared to published work.
 
 ---
 
@@ -256,7 +202,7 @@ LOAD-BEARING (changing these = re-deciding the project):
 
 SWAPPABLE (change freely if evidence says so — surface it, don't agonize):
 - ~~**Scene representation.**~~ **DECIDED 2026-08-12, was swappable, now settled** —
-  `docs/06_scene_probe.md`. The inherited BEV-RGB + DINOv2 encoder was probed and does not
+  RESULTS §6. The inherited BEV-RGB + DINOv2 encoder was probed and does not
   carry usable scene signal: it fails to beat its own unencoded input (37.6% / 34.3% vs
   36.4% raw pixels, 26.4% prior), and ViT-B scores *below* ViT-S, so it is the domain, not
   capacity. The **binary occupancy raster, cropped in the agent's own frame**, reaches 63.0%
@@ -278,11 +224,11 @@ Ordered by risk. For each, the plan is to test cheaply and pivot early, not to d
 failure after building everything on top.
 
 1. **Chaining continuity (2d).** Mechanism VALIDATED at one seam
-   (`docs/07_continuation_probe.md`) — but downgraded, not retired. What remains untested
+   (RESULTS §7) — but downgraded, not retired. What remains untested
    is **error accumulation over a real chain**: the probe used a ground-truth previous
    segment, and its reconstructed-prefix proxy (86mm seam, 2x goal error) is one seam's
    worth of degradation, not N. Drift over an indefinite chain is now the open question.
-2. **Measurement validity.** Four silent frame/normalization bugs so far (section 3), two
+2. **Measurement validity.** Five silent convention bugs so far (ledger in RESULTS.md), two
    caught only after they had changed a conclusion. Each was missed because the check used
    could not detect it — start-error cannot see a rotation; per-frame MPJPE cannot see
    cumulative drift. **MANDATORY: every pipeline that emits a number gets an oracle
@@ -304,52 +250,30 @@ everything else is engineering plus discipline about measurement (#2).
 ---
 
 ## 6. Build order
-1. ~~Verify plumbing~~ DONE — `docs/01_data_pipeline.md`.
-2. ~~Baseline calibration~~ DONE for reconstruction — `docs/02_baseline_calibration.md`.
-3. ~~**VQ-VAE joint finetune**~~ DONE — `docs/03_tokenizer_finetune.md`.
-4. ~~**Grounding probe**~~ DONE and PASSED — `docs/04_grounding.md`. Ran on the FROZEN
-   tokenizer, which was right: it isolated grounding from tokenizer quality.
-5. ~~**Re-extract tokens**~~ DONE and verified — `docs/05_token_reextraction.md`. Probe
-   re-run on the new tokenizer confirms goal-error tracks the lower oracle floor
-   (0.164 -> 0.132 m) with no change to the grounding mechanism.
+Steps 1-8 DONE — numbers in `docs/RESULTS.md` §1-8. In brief: plumbing, baseline calibration
+(reconstruction only), tokenizer finetune, grounding probe, token re-extraction, scene-encoder
+probe, continuation probe, and the combined transformer.
 
-6. ~~**Scene representation probe**~~ DONE — `docs/06_scene_probe.md`. DINOv2 carries no
-   usable signal on top-down renders (it does not beat its own unencoded input); occupancy
-   geometry nearly doubles it. Scene encoder swapped accordingly, see section 4.
-7. ~~**Conditional continuation probe**~~ DONE — `docs/07_continuation_probe.md`. Seam
-   error halved and at the oracle floor. All three conditioning inputs are now settled by
-   evidence: relative-frame goal (2f), occupancy scene (section 4), seam pose (2d).
+Note steps 4/6/7 were **probes** — one conditioning input each, small budget, single seed.
+Step 8 is the first model trained on all of it together.
 
-8. ~~**Transformer finetune — the actual model**~~ DONE — `docs/08_transformer_finetune.md`.
-   Trains healthily on all conditioning together and matches the probes. **But the scene arm
-   is UNEVALUATED AND UNTESTABLE ON THIS DATA**. A correct collision metric now exists (the
-   0.9m TALL-obstacle map, see 08), but **only 25 of 2962 HUMANISE segment clips (0.8%) walk
-   further than 1.5m** — mean displacement is 0.63m. Goal error saturates, and collision is
-   determined by the START POSE rather than the path (NULL "never move" scores the same as
-   every model). This is the absence of a test, NOT evidence that occupancy fails.
+**-> YOU ARE HERE.**
 
-**-> YOU ARE HERE. Next: step 9 — and it is the unlock, not just the next step. Chaining is
-what produces multi-metre paths, and therefore the first setting where the scene arm can be
-measured at all. Re-run the scene ablation on chained rollouts.**
-
-<details><summary>original step 8 text</summary> Steps 4/6/7 are PROBES: each isolates one
-   conditioning input, at a 4000-iteration budget, single seed. None of them is the system.
-   This step trains one model on all of it — text + relative goal + occupancy crop + seam
-   pose — on `tokens_finetuned/`, at a real training budget, and reports held-out numbers
-   for the combination rather than for each part alone. **Scene conditioning has never been
-   fed to a transformer at all** (step 6 validated the representation with a linear probe on
-   action classification, which is not the same claim). Expect the combination to be worse
-   than the per-probe numbers suggest; if it is not, be suspicious.
-   </details>
-9. **Chaining**: multi-segment rollout + SE(2) + seam blend, on the step-8 model. Mechanism
-   proven at one seam; **accumulation over N segments is unproven**. Measure seam and goal
-   error as a function of chain length, and feed the DECODED pose forward, never a blended
-   one (2d point 2).
-10. **Collision-guided decoding** (+ rejection-sampling floor). Non-collision improves.
+9. **Chaining — and it is the unlock, not just the next step.** Multi-segment rollout + SE(2)
+   + seam blend on the step-8 `full` model. Two things ride on it:
+   (a) **accumulation over N segments is unproven** — the mechanism is validated at ONE seam
+   with a ground-truth previous segment; (b) it is the only way to evaluate scene
+   conditioning, because chained rollouts are what produce multi-metre paths and HUMANISE
+   segments average 0.63 m. Feed the DECODED pose forward, never a blended one (2d point 2).
+   Re-run `eval_collision.py` (0.9 m map, cache ready) on the chained rollouts.
+10. **Collision-guided decoding** (+ rejection-sampling floor). SWAPPABLE, see 2e.
 11. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
-12. **Benchmark comparison** (PSMo / AffordMotion) + generation FID. Done-criterion #1 is
-    still only half met: reconstruction FID is calibrated, generation FID is not. No number
-    in this repo is yet comparable to published work.
+12. **Benchmark comparison** (PSMo / AffordMotion) + generation FID. **Check how they define
+    non-collision before quoting anything** — given RESULTS §8, theirs cannot be the naive
+    definition, and the definition decides comparability.
+
+Time-box step 9. If drift appears, get a watchable multi-segment mp4 first and measure after;
+another well-instrumented negative result is worth less right now than a demo that runs.
 
 ## 7. Done criteria
 1. ~~Baseline matches T2M-GPT paper~~ DONE for reconstruction; harness trusted.
