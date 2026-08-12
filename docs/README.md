@@ -12,9 +12,14 @@ was established and how to reproduce it. Read in order; each assumes the ones be
 | [05](05_token_reextraction.md) | Re-extract tokens with the finetuned VQ-VAE | DONE |
 | [06](06_scene_probe.md) | Scene representation probe — DINOv2 vs occupancy | DONE |
 | [07](07_continuation_probe.md) | Conditional continuation probe — the chaining mechanism | DONE |
-| 08 | Chaining — multi-segment rollout + seam blend | **NEXT** |
-| 09 | Collision-guided decoding | |
-| 10 | Qwen JSON end-to-end → ScanNet demo | |
+| 08 | **Transformer finetune — the actual model, all conditioning together** | **NEXT** |
+| 09 | Chaining — multi-segment rollout + seam blend | |
+| 10 | Collision-guided decoding | |
+| 11 | Qwen JSON end-to-end → ScanNet demo | |
+| 12 | Benchmark comparison + generation FID | |
+
+Steps 04, 06 and 07 are **probes** — each isolates one question at a small budget. They are
+not the system. Step 08 is where the system gets built.
 
 Architecture, locked decisions and risks live in `CLAUDE.md`, not here.
 

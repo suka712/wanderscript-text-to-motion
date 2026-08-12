@@ -315,12 +315,23 @@ everything else is engineering plus discipline about measurement (#2).
 
 **-> YOU ARE HERE. Next: step 8.**
 
-8. **Chaining**: multi-segment rollout + SE(2) + seam blend. The mechanism is proven at one
-   seam; what is unproven is **accumulation over N segments**. Measure seam error and goal
+8. **Transformer finetune — THE ACTUAL MODEL.** Steps 4/6/7 are PROBES: each isolates one
+   conditioning input, at a 4000-iteration budget, single seed. None of them is the system.
+   This step trains one model on all of it — text + relative goal + occupancy crop + seam
+   pose — on `tokens_finetuned/`, at a real training budget, and reports held-out numbers
+   for the combination rather than for each part alone. **Scene conditioning has never been
+   fed to a transformer at all** (step 6 validated the representation with a linear probe on
+   action classification, which is not the same claim). Expect the combination to be worse
+   than the per-probe numbers suggest; if it is not, be suspicious.
+9. **Chaining**: multi-segment rollout + SE(2) + seam blend, on the step-8 model. Mechanism
+   proven at one seam; **accumulation over N segments is unproven**. Measure seam and goal
    error as a function of chain length, and feed the DECODED pose forward, never a blended
    one (2d point 2).
-9. **Collision-guided decoding** (+ rejection-sampling floor). Non-collision improves.
-10. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
+10. **Collision-guided decoding** (+ rejection-sampling floor). Non-collision improves.
+11. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
+12. **Benchmark comparison** (PSMo / AffordMotion) + generation FID. Done-criterion #1 is
+    still only half met: reconstruction FID is calibrated, generation FID is not. No number
+    in this repo is yet comparable to published work.
 
 ## 7. Done criteria
 1. ~~Baseline matches T2M-GPT paper~~ DONE for reconstruction; harness trusted.
