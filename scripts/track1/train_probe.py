@@ -96,7 +96,8 @@ MAX_MOTION_LENGTH = BLOCK_SIZE  # 51, matches T2M-GPT's own convention for unit_
 MOT_END_IDX = NB_CODE
 MOT_PAD_IDX = NB_CODE + 1
 
-COND_EXTRA_DIMS = {"abs": 6, "rel": 2, "rel_prefix": 2 + 66}
+COND_EXTRA_DIMS = {"abs": 6, "rel": 2, "rel_prefix": 2 + 66,
+                   "full": 2 + 66 + 28 * 28}
 
 
 def cond_extra_raw(d, cond_mode):
@@ -113,6 +114,16 @@ def cond_extra_raw(d, cond_mode):
         return np.concatenate([
             world_to_local_xy(d["goal"], d["start"]),
             d["prefix_pose"],
+        ]).astype(np.float32)
+    if cond_mode == "full":
+        # everything settled by the probes: relative goal (04), seam pose (07),
+        # occupancy crop in the agent's frame (06). Raw occupancy goes straight
+        # into the existing cond_emb Linear -- that IS the linear readout the
+        # scene probe validated, so no new module is introduced.
+        return np.concatenate([
+            world_to_local_xy(d["goal"], d["start"]),
+            d["prefix_pose"],
+            d["occ_crop"],
         ]).astype(np.float32)
     raise ValueError(cond_mode)
 
@@ -189,13 +200,16 @@ def load_pretrained(trans_encoder, conditioned, cond_dim=0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--conditioned", action="store_true")
-    ap.add_argument("--cond-mode", choices=["rel", "abs", "rel_prefix"], default="rel",
+    ap.add_argument("--cond-mode", choices=["rel", "abs", "rel_prefix", "full"], default="rel",
                     help="frame the goal is expressed in; see module docstring. "
                          "Ignored when --conditioned is not set.")
     ap.add_argument("--iters", type=int, default=4000)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--print-iter", type=int, default=100)
+    ap.add_argument("--save-every", type=int, default=0,
+                    help="also write net_iter<N>.pth every N iters. Worth setting for long "
+                         "runs -- a crash at iter 19000 of 20000 otherwise loses everything.")
     ap.add_argument("--out-name", type=str, default=None)
     ap.add_argument("--tokens-dir", type=str, default=TOKENS_DIR,
                     help="token dir from prepare_probe_data.py. MUST match the tokenizer "
@@ -278,6 +292,9 @@ def main():
         optimizer.step()
 
         avg_loss += loss_cls.item()
+        if args.save_every and nb_iter % args.save_every == 0:
+            torch.save({"trans": trans_encoder.state_dict()},
+                       os.path.join(ckpt_dir, f"net_iter{nb_iter:06d}.pth"))
         if nb_iter % args.print_iter == 0:
             acc = right_num * 100 / max(nb_sample, 1)
             print(f"[{tag}] iter {nb_iter}/{args.iters} loss {avg_loss / args.print_iter:.4f} acc {acc:.2f}%", flush=True)

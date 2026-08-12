@@ -36,9 +36,14 @@ import torch
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
+sys.path.insert(0, os.path.join(REPO_ROOT, "scripts", "scene_probe"))
+
 import motion_features as mf  # noqa: E402
 from humanise_join import get_record, compute_track2  # noqa: E402
 from vqvae_loader import load_vqvae  # noqa: E402
+from scene_probe import crop_agent_frame  # noqa: E402
+
+OCC_N = 28  # downsample of the 112px crop; matches docs/06_scene_probe.md's validated arm
 
 HUMANISE_ROOT = os.environ.get("WANDER_HUMANISE_ROOT", "/media/user/2tb/motion_data/HUMANISE")
 T2M_GPT_ROOT = os.environ.get("WANDER_T2M_GPT_ROOT", "/home/user/Khiem-ssh/T2M-GPT")
@@ -63,8 +68,9 @@ def encode(net, data263, mean, std):
         return net.encode(x)[0].cpu().numpy().astype(np.int64)
 
 
-def process_split(name, net, mean, std):
-    out, skipped = [], 0
+def process_split(name, net, mean, std, bev_dir=None):
+    out, skipped, no_scene = [], 0, 0
+    bev_cache = {}
     for n_done, idx in enumerate(load_split(name)):
         cm = np.load(os.path.join(HUMANISE_ROOT, "contact_motion", "motions", f"{idx:05d}.npy"))
         T_raw = cm.shape[0]
@@ -126,6 +132,28 @@ def process_split(name, net, mean, std):
         start_b = np.array([xy[t, 0], xy[t, 1], sincos[t, 0], sincos[t, 1]], dtype=np.float32)
         goal_b = xy[t + Tb - 1].astype(np.float32)
 
+        occ_crop = None
+        if bev_dir is not None:
+            sid = rec.scene if hasattr(rec, "scene") else None
+            path = os.path.join(bev_dir, f"{sid}.npz") if sid else None
+            if path and os.path.exists(path):
+                if sid not in bev_cache:
+                    if len(bev_cache) > 30:
+                        bev_cache.clear()
+                    z = np.load(path)
+                    bev_cache[sid] = (z["occ"].astype(np.float32), z["extent"])
+                occ, ext = bev_cache[sid]
+                yaw0 = float(np.arctan2(sincos[t, 0], sincos[t, 1]))
+                # centered on the segment's START, in the agent's frame, so the
+                # goal region and the obstacles in between are both inside it and
+                # their POSITION in the crop is meaningful to a linear readout.
+                c = crop_agent_frame(occ, ext, (xy[t, 0], xy[t, 1]), yaw0)
+                k = c.shape[0] // OCC_N
+                occ_crop = c.reshape(OCC_N, k, OCC_N, k).mean((1, 3)).ravel().astype(np.float32)
+            else:
+                no_scene += 1
+                continue
+
         out.append({
             "index": idx,
             "tokens": encode(net, d_b, mean, std),
@@ -135,11 +163,13 @@ def process_split(name, net, mean, std):
             "a_end_pose": a_end_pose.ravel(),        # (66,) A-frame view of the same seam
             "text": rec.utterance,
             "action": rec.action,
+            **({"occ_crop": occ_crop} if occ_crop is not None else {}),
         })
         if (n_done + 1) % 2000 == 0:
             print(f"  [{name}] {n_done + 1}", flush=True)
 
-    print(f"{name}: {len(out)} kept, {skipped} skipped")
+    print(f"{name}: {len(out)} kept, {skipped} skipped"
+          + (f", {no_scene} dropped for missing scene render" if bev_dir else ""))
     return out
 
 
@@ -147,6 +177,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default=None)
     ap.add_argument("--out-dir", required=True)
+    ap.add_argument("--bev-dir", default=None,
+                    help="BEV cache from scripts/scene_probe/render_bev_cache.py. If given, "
+                         "each clip also gets an occupancy crop centered on the segment's "
+                         "START in the agent's frame -- the scene conditioning for step 8.")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -156,7 +190,7 @@ def main():
     print(f"VQ-VAE from {args.ckpt or 'frozen pretrained'} -> {args.out_dir}")
 
     for split in ["train", "test"]:
-        data = process_split(split, net, mean, std)
+        data = process_split(split, net, mean, std, args.bev_dir)
         with open(os.path.join(args.out_dir, f"{split}.pkl"), "wb") as f:
             pickle.dump(data, f)
         print(f"wrote {split}.pkl ({len(data)} clips)")
