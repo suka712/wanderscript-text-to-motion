@@ -131,6 +131,14 @@ def process_split(name, net, mean, std, bev_dir=None):
             continue
         start_b = np.array([xy[t, 0], xy[t, 1], sincos[t, 0], sincos[t, 1]], dtype=np.float32)
         goal_b = xy[t + Tb - 1].astype(np.float32)
+        # Full per-frame world track of segment B, aligned to its 263 frames.
+        # Needed for TRUNCATION augmentation: cutting the token sequence at a
+        # random length L makes the goal the position at frame 4L-1, so one clip
+        # yields many (goal, motion) pairs at different distances and directions.
+        # Without this the model only ever sees the one goal it was already
+        # walking to, which is the leading explanation for why it does not follow
+        # arbitrary goals (RESULTS §9).
+        xy_traj = xy[t:t + Tb].astype(np.float32)
 
         occ_crop = None
         if bev_dir is not None:
@@ -159,6 +167,7 @@ def process_split(name, net, mean, std, bev_dir=None):
             "tokens": encode(net, d_b, mean, std),
             "start": start_b,
             "goal": goal_b,
+            "xy_traj": xy_traj,                      # (Tb,2) world track, for goal augmentation
             "prefix_pose": gt_first.ravel(),         # (66,) conditioning input
             "a_end_pose": a_end_pose.ravel(),        # (66,) A-frame view of the same seam
             "text": rec.utterance,

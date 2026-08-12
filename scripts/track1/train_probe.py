@@ -145,17 +145,36 @@ def cond_extra(d, cond_mode, mean, std):
 
 
 class ProbeMotionDataset(Dataset):
-    def __init__(self, manifest, cond_mode, cond_mean, cond_std):
+    def __init__(self, manifest, cond_mode, cond_mean, cond_std, goal_aug=0.0, rng_seed=0):
         self.data = manifest
         self.cond_mode = cond_mode
         self.cond_mean = cond_mean
         self.cond_std = cond_std
+        # goal_aug: probability of TRUNCATION augmentation. Cut the token
+        # sequence at a random length L and make the goal the world position at
+        # frame 4L-1, so the same clip supplies many (goal, motion) pairs at
+        # varied distance and direction. Addresses RESULTS §9: the model only
+        # ever saw the goal it was already reaching, so it learned to produce
+        # plausible motion rather than to GO somewhere.
+        # NOTE the target motion is truncated WITH the goal. Randomising the goal
+        # while keeping the motion would teach the model to ignore it.
+        self.goal_aug = goal_aug
+        self.rng = np.random.RandomState(rng_seed)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, i):
         d = self.data[i]
+        if self.goal_aug > 0 and "xy_traj" in d and self.rng.rand() < self.goal_aug:
+            n_tok = len(d["tokens"])
+            traj = d["xy_traj"]
+            if n_tok >= 3 and len(traj) >= 8:
+                L = self.rng.randint(2, n_tok + 1)
+                fi = min(4 * L - 1, len(traj) - 1)
+                d = dict(d)
+                d["tokens"] = d["tokens"][:L]
+                d["goal"] = traj[fi].astype(np.float32)
         m_tokens = d["tokens"].astype(np.int64)
         m_tokens_len = m_tokens.shape[0]
         if m_tokens_len + 1 < MAX_MOTION_LENGTH:
@@ -207,6 +226,9 @@ def main():
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--print-iter", type=int, default=100)
+    ap.add_argument("--goal-aug", type=float, default=0.0,
+                    help="probability of truncation augmentation (see ProbeMotionDataset). "
+                         "0.5 is the first thing to try for the RESULTS section 9 problem.")
     ap.add_argument("--save-every", type=int, default=0,
                     help="also write net_iter<N>.pth every N iters. Worth setting for long "
                          "runs -- a crash at iter 19000 of 20000 otherwise loses everything.")
@@ -228,7 +250,8 @@ def main():
     cond_mean, cond_std = compute_cond_norm(train_manifest, args.cond_mode)
     print(f"cond_mode={args.cond_mode} mean={cond_mean} std={cond_std}")
 
-    dataset = ProbeMotionDataset(train_manifest, args.cond_mode, cond_mean, cond_std)
+    dataset = ProbeMotionDataset(train_manifest, args.cond_mode, cond_mean, cond_std,
+                                 goal_aug=args.goal_aug)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
 
     def cycle(it):
@@ -305,7 +328,8 @@ def main():
     with open(os.path.join(ckpt_dir, "norm_stats.json"), "w") as f:
         json.dump({"cond_mean": cond_mean.tolist(), "cond_std": cond_std.tolist(),
                    "cond_mode": args.cond_mode, "conditioned": args.conditioned,
-                   "clip_dim": clip_dim, "tokens_dir": args.tokens_dir}, f)
+                   "clip_dim": clip_dim, "tokens_dir": args.tokens_dir,
+                   "goal_aug": args.goal_aug}, f)
     print(f"saved {ckpt_path}")
 
 
