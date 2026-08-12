@@ -228,7 +228,7 @@ failure after building everything on top.
    is **error accumulation over a real chain**: the probe used a ground-truth previous
    segment, and its reconstructed-prefix proxy (86mm seam, 2x goal error) is one seam's
    worth of degradation, not N. Drift over an indefinite chain is now the open question.
-2. **Measurement validity.** Five silent convention bugs so far (ledger in RESULTS.md), two
+3. **Measurement validity.** Five silent convention bugs so far (ledger in RESULTS.md), two
    caught only after they had changed a conclusion. Each was missed because the check used
    could not detect it — start-error cannot see a rotation; per-frame MPJPE cannot see
    cumulative drift. **MANDATORY: every pipeline that emits a number gets an oracle
@@ -236,16 +236,17 @@ failure after building everything on top.
    output BEFORE reading any model number off it. If the oracle is not small relative to
    the effect you are measuring, you have no measurement. Highest-frequency failure mode
    in this project, ahead of any algorithmic risk.
-3. **Collision-guided decoding (2e).** May not steer. Not the hill — has fallbacks and
+4. **Collision-guided decoding (2e).** May not steer. Not the hill — has fallbacks and
    demotes to an ablation. Low strategic risk by design.
-4. **Shared GPU.** The 4090 is shared; the 3090 is not. See section 8.
-5. ~~Goal grounding~~ RETIRED 2026-08-12 — probe passed, see 2f. Do not pivot to
+5. **Shared GPU.** The 4090 is shared; the 3090 is not. See section 8.
+6. ~~Goal grounding~~ RETIRED 2026-08-12 — probe passed, see 2f. Do not pivot to
    trajectory-first.
-6. ~~VQ-VAE joint finetune balance~~ RETIRED 2026-08-12 — Track 2 passed at 1:1 sampling,
+7. ~~VQ-VAE joint finetune balance~~ RETIRED 2026-08-12 — Track 2 passed at 1:1 sampling,
    lr 2e-5, no forgetting.
 
-Meta: with grounding retired, **chaining (#1) is the only genuine research bet left**;
-everything else is engineering plus discipline about measurement (#2).
+Meta: chaining is retired; goal-following on ARBITRARY goals replaced it as the top risk, and
+it is the one that gates a usable demo. Everything else is engineering plus discipline about
+measurement (#3).
 
 ---
 
@@ -257,16 +258,29 @@ probe, continuation probe, and the combined transformer.
 Note steps 4/6/7 were **probes** — one conditioning input each, small budget, single seed.
 Step 8 is the first model trained on all of it together.
 
-**-> YOU ARE HERE.**
+9. ~~**Chaining**~~ DONE — RESULTS §9. **No error accumulation** (drift flat across N=1-3
+   while the oracle's grows); seams hold at ~69-80mm; 10 chained segments give 7.7m paths in
+   real rooms. Risk #1 retired for N≤3. **But neither model avoids obstacles** — both collide
+   MORE than the straight-line waypoint path (2.07% / 2.61% vs 1.09%), so passive occupancy
+   conditioning does not confer avoidance.
 
-9. **Chaining — and it is the unlock, not just the next step.** Multi-segment rollout + SE(2)
+**-> YOU ARE HERE. Next: goal generalization (risk #1) BEFORE step 10 or 11.** On arbitrary
+goals the model is no better than standing still, which breaks the demo and the MLLM stage.
+Try goal augmentation during training and re-measure against the never-move null. Step 10
+(collision-guided decoding) also now has a measured justification — passive scene conditioning
+does not steer, and the 1.09% straight-line control is the number to beat.
+
+<details><summary>original step 9 text</summary> Multi-segment rollout + SE(2)
    + seam blend on the step-8 `full` model. Two things ride on it:
    (a) **accumulation over N segments is unproven** — the mechanism is validated at ONE seam
    with a ground-truth previous segment; (b) it is the only way to evaluate scene
    conditioning, because chained rollouts are what produce multi-metre paths and HUMANISE
    segments average 0.63 m. Feed the DECODED pose forward, never a blended one (2d point 2).
    Re-run `eval_collision.py` (0.9 m map, cache ready) on the chained rollouts.
-10. **Collision-guided decoding** (+ rejection-sampling floor). SWAPPABLE, see 2e.
+   </details>
+10. **Collision-guided decoding** (+ rejection-sampling floor). SWAPPABLE, see 2e. Beat the
+    1.09% straight-line control; rejection sampling over chained rollouts is the guaranteed
+    floor.
 11. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
 12. **Benchmark comparison** (PSMo / AffordMotion) + generation FID. **Check how they define
     non-collision before quoting anything** — given RESULTS §8, theirs cannot be the naive

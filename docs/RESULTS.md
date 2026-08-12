@@ -221,6 +221,95 @@ unlock** — composing segments is what produces multi-metre paths and therefore
 setting where a scene arm is measurable. And **check how PSMo/AffordMotion define non-collision
 before any comparison**; theirs cannot be the naive definition.
 
+## 9 · Chaining — DONE. Works, and does not accumulate
+
+The first motion in this project longer than one segment. Each segment is conditioned on the
+previous segment's **decoded** ending pose; heading is recovered from the generated body via
+the same hip/shoulder formula as `compute_track2`, so the chain's own geometry decides where
+it points.
+
+### Accumulation — the open research question, answered
+
+Real clips cut into N consecutive segments, each fed its true endpoint as goal, chained from
+the first segment's real start:
+
+| N | final drift | ORACLE drift | NULL | seam | goal | n |
+|---|---|---|---|---|---|---|
+| 1 | 0.281 m | 0.113 m | 0.659 m | — | 0.281 m | 200 |
+| 2 | 0.252 m | 0.154 m | 0.701 m | 71.9 mm | 0.215 m | 168 |
+| 3 | 0.282 m | 0.205 m | 0.768 m | 68.9 mm | 0.232 m | 83 |
+
+**Drift does not grow with chain length** (0.281 → 0.252 → 0.282) while the ORACLE's drift
+does (0.113 → 0.205), so what accumulates is tokenizer reconstruction, not chaining. The gap
+to the oracle actually *narrows* (0.168 → 0.077). Seam holds at ~69-72 mm across chain
+lengths, matching the one-seam probe. **CLAUDE.md risk #1 is retired for N≤3.** N>3 is
+untested — HUMANISE clips are too short to cut further, which is itself the limitation.
+
+### Free rollout — multi-metre paths, and the scene arm finally measurable
+
+Waypoints sampled on free floor, spaced in a **band** at the trained displacement scale.
+10 segments, 30 paired rollouts (identical waypoints per arm):
+
+| | collision | goal err / seg | seam | path |
+|---|---|---|---|---|
+| full (with occupancy) | 2.07% | 0.883 m | 79.8 mm | 7.67 m |
+| noscene | 2.61% | 1.329 m | 92.2 mm | 7.48 m |
+| **straight-line control** | **1.09%** | — | — | 9.25 m commanded |
+
+**Neither model avoids obstacles — both collide MORE than walking the waypoint polyline
+directly.** Passive occupancy conditioning does not confer avoidance. This is the argument
+for step 10 (collision-guided decoding), and the first time that component has had a
+justification measured rather than assumed.
+
+Scene conditioning does beat its ablation on all three metrics, and this is the first setting
+where any difference appeared at all — vindicating "chaining is the unlock" (§8). But **one
+training run per arm**, so it cannot be separated from seed variance. Do not quote it as
+established without a reseed.
+
+**Waypoint spacing is load-bearing and was got wrong first.** Sampling "anywhere beyond
+min_step" gives ~4 m hops; the model, trained on 0.63 m displacement, walks ~1.3 m and stops,
+yielding 2.5 m goal error that says nothing about chaining. Goals must be spaced at the
+trained scale — a band, not a lower bound.
+
+### THE FINDING: goal-following does not generalize to arbitrary goals
+
+This is the most important result in §9 and it qualifies §4 and §5.
+
+| setting | goal err | null (never move) | vs null |
+|---|---|---|---|
+| in-distribution goals (§5) | 0.132 m | 0.627 m | **−78.9%** |
+| free waypoints, full | 0.883 m | 0.925 m | **+4.5%** |
+| free waypoints, full, real clip text | 0.981 m | 0.925 m | +6.1% |
+| free waypoints, noscene | 1.329 m | 0.925 m | −43.7% (worse than not moving) |
+
+**On arbitrary commanded goals the model performs no better than standing still.** It does
+move — 7.7 m of path over 10 segments — but not toward the goal.
+
+Not a text problem: substituting the clip's real utterance for the generic
+"walk to the target" changes nothing (0.981 vs 0.883 m). **It is the goals.**
+
+The likely mechanism: the model learned the joint distribution of (motion | text, prefix,
+scene, goal) from data in which the goal is *correlated with* the motion that follows. On
+goals drawn from that distribution — real clip endpoints — this is indistinguishable from
+goal-following, and produced §4's +0.90/+0.97 commanded-vs-achieved correlation. On goals
+sampled independently of the data, the correlation is gone and so is the behaviour.
+
+**Consequences, and they are not small:**
+- Done-criterion 3 ("single segment reaches an explicit goal") holds only for
+  in-distribution goals. Say so when quoting it.
+- **Step 11 is directly threatened.** An MLLM planner emits arbitrary coordinates; on this
+  evidence they would not be followed. Test goal-following on planner-like goals before
+  building the MLLM stage, not after.
+- The fix is a training-data question, not an architecture one: the model has never seen a
+  goal that was not the endpoint it was already going to reach. Candidate remedies —
+  goal augmentation (perturb or resample goals during training), or an explicit trajectory
+  objective that penalizes distance-to-goal rather than only token likelihood.
+
+### Other limits
+
+N>3 chaining untested (HUMANISE clips cannot be cut further). Free-waypoint rollouts use
+`walk` clips only. One training run per arm throughout.
+
 ---
 
 ## Conditioning inputs — evidence status
@@ -229,7 +318,7 @@ before any comparison**; theirs cannot be the naive definition.
 |---|---|
 | relative-frame goal | validated (§4, §5) |
 | seam pose | validated (§7) |
-| occupancy scene | representation validated (§6); contribution to generation **untestable on this data** |
+| occupancy scene | representation validated (§6); on chained rollouts it beats its ablation on collision/goal/seam (§9), but **single seed per arm** — suggestive, not established. It does NOT produce obstacle avoidance: both models collide more than a straight line. |
 
 ## Bug ledger — five silent convention bugs, same shape each time
 
