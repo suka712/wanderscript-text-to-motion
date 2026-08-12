@@ -1,21 +1,17 @@
 # In flight — read this if you are picking up cold
 
-Volatile state that is NOT captured by RESULTS.md: what is running
-right now, where things live on disk, and what the next concrete action is.
+Volatile state that is NOT captured by RESULTS.md: what is running right now, where things
+live on the boxes, and the next concrete action.
 **Update or delete this file when the work it describes lands.**
 
-Last updated: 2026-08-12, after step 8 finished.
+Last updated: 2026-08-12, after step 9.
 
 ---
 
-## Nothing is running.
+## Nothing is running. Box is idle (270 MiB, no jobs).
 
-Step 8 completed (both `full` and `noscene`, 20000 iters each). Results and the reasons the
-ablation is void are in RESULTS §8.
-
-Check the box is idle before starting anything:
 ```
-ssh train-3090 'pgrep -af train_probe.py; nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader'
+ssh train-3090 'pgrep -af "train_probe|demo_rollout|render_"; nvidia-smi --query-gpu=memory.used --format=csv,noheader'
 ```
 
 **Gotcha when writing a wait loop.** `while pgrep -f foo.py >/dev/null; do sleep 60; done`
@@ -24,25 +20,45 @@ itself. Several waiters this session hung on that and had to be killed by PID. U
 that cannot match the watcher — e.g. `pgrep -f "[f]oo.py"` — or poll a sentinel in the log
 (`grep -q '^saved ' log`) instead of the process table.
 
-## Next action — pick one
+## Next action — goal generalization, BEFORE steps 10/11
 
-**Step 9, chaining.** Multi-segment rollout + SE(2) + seam blend on the step-8 `full` model.
-Two things ride on it, not one:
+RESULTS §9 found the model follows in-distribution goals (−78.9% vs a never-move null) but
+**arbitrary goals not at all** (+4.5%, i.e. no better than standing still). Real clip text
+does not fix it, so it is the goals, not the text. This gates the demo and step 11, because
+an MLLM planner emits arbitrary coordinates.
 
-1. Accumulation over N segments — the open research question. The continuation mechanism is
-   proven at ONE seam only (RESULTS §7). Feed the DECODED pose forward, never a blended one
-   (CLAUDE.md 2d point 2).
-2. It is the only way to evaluate scene conditioning. Chained rollouts are what produce
-   multi-metre paths; HUMANISE segments alone average 0.63m, which is why every step-8
-   evaluation came back empty (RESULTS §8). Re-run `eval_collision.py` on chained rollouts.
+Cheapest test of the leading hypothesis — the model never saw a goal that was not the endpoint
+it was already reaching:
 
-The collision metric is ready: `~/wander_data/bev_tall_cache` (0.9m threshold, 643 scenes),
-`scripts/continuation/eval_collision.py` already points at it.
+1. Retrain `--cond-mode full` with **goal augmentation**: with probability p, replace the
+   training goal with a perturbed or resampled one and keep the target motion. If goal-error
+   on free waypoints drops below the null, the diagnosis is confirmed and the fix is data.
+2. Re-measure with `scripts/chaining/demo_rollout.py --n-rollouts 30 --min-step 0.6
+   --max-step 1.2`, which prints the straight-line control alongside.
+3. The never-move null for those settings is ~0.925 m. Beat it by a wide margin or the
+   problem is not solved.
 
-Not worth doing: target-instance exclusion. Attempted and blocked — no ScanNet instance
-segmentation on either box. The connected-component proxy was tried and failed (331/400 clips
-merged furniture with walls); it survives as `src/target_occupancy.py` with the failure
-documented so nobody retries it.
+Waypoint spacing must stay a **band** at the trained displacement scale; "anywhere beyond
+min_step" gives ~4 m hops that the model ignores, and the resulting error says nothing.
+
+Then step 10 (collision-guided decoding) — it now has a measured justification: passive scene
+conditioning does not steer, and both models collide MORE than the 1.09% straight-line
+control. That is the number to beat.
+
+## Ready to use
+
+- Collision metric: `~/wander_data/bev_tall_cache` (0.9 m threshold, 643 scenes);
+  `scripts/continuation/eval_collision.py` points at it. **Never score on the 0.12 m map.**
+- Chaining: `scripts/chaining/{rollout,eval_accumulation,demo_rollout,render_chain_video}.py`.
+- Step-8 models: `~/wander_data/step8/checkpoints/{full,noscene}/`.
+
+## Not worth redoing
+
+- **Target-instance exclusion for collision** — blocked, no ScanNet instance segmentation on
+  either box. The connected-component proxy failed (331/400 clips merged furniture with
+  walls); it survives as `src/target_occupancy.py` with the failure documented.
+- **Scene ablation on single HUMANISE segments** — every metric is saturated or
+  start-pose-determined there (RESULTS §8). Only chained rollouts can resolve it.
 
 ## Where things live on the 3090
 
