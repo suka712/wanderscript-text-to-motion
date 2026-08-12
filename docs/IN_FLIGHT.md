@@ -18,6 +18,12 @@ Check the box is idle before starting anything:
 ssh train-3090 'pgrep -af train_probe.py; nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader'
 ```
 
+**Gotcha when writing a wait loop.** `while pgrep -f foo.py >/dev/null; do sleep 60; done`
+never exits: the loop's own command line contains "foo.py", so pgrep matches the watcher
+itself. Several waiters this session hung on that and had to be killed by PID. Use a pattern
+that cannot match the watcher — e.g. `pgrep -f "[f]oo.py"` — or poll a sentinel in the log
+(`grep -q '^saved ' log`) instead of the process table.
+
 ## Next action — pick one
 
 **Step 9, chaining.** Multi-segment rollout + SE(2) + seam blend on the step-8 `full` model.
