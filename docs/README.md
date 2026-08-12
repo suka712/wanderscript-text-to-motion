@@ -23,6 +23,9 @@ not the system. Step 08 is where the system gets built.
 
 Architecture, locked decisions and risks live in `CLAUDE.md`, not here.
 
+**[IN_FLIGHT.md](IN_FLIGHT.md)** holds volatile state — running jobs, on-disk paths, the
+next command. Read it before starting anything; update or delete it when its work lands.
+
 `archive/` is superseded material kept for provenance — dated progress reports, the
 original step specs, and the two parallel-track write-ups that 03 and 04 replace. Nothing
 there is authoritative; if it disagrees with a numbered doc, the numbered doc wins.

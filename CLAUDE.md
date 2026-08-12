@@ -9,6 +9,9 @@ works (2b, section 3); grounding probe done and it **passes** (2f). Next action 
 build-order step 5: re-extract tokens with the finetuned VQ-VAE. The only remaining
 research risk is chaining. Full reconciliation of the two diagnostic tracks:
 `docs/` — one numbered file per completed stage; start at `docs/README.md`.
+**If a job may be running or you are picking up cold, read `docs/IN_FLIGHT.md` FIRST** —
+it holds what is executing right now, where everything lives on disk, and the next concrete
+command. The numbered docs cover finished work only.
 
 A note on epistemic status: several original assumptions turned out wrong (a frozen
 tokenizer was assumed sufficient; cross-segment chaining was assumed trivial). Both were
