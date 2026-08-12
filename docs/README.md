@@ -5,7 +5,7 @@ Three files. Read in this order.
 | | |
 |---|---|
 | **[IN_FLIGHT.md](IN_FLIGHT.md)** | **Read first.** What is running right now, where everything lives on the boxes, the next concrete command. Volatile — update or delete it when its work lands. |
-| **[RESULTS.md](RESULTS.md)** | Everything established, one section per build-order stage, with the oracle each number is quoted against. |
+| **[RESULTS.md](RESULTS.md)** | **Part 1 is plain English** — what works, what doesn't, what's next, plus a glossary of the six terms Part 2 leans on. **Part 2** is the technical detail, one section per stage. Start at Part 1 even if you wrote this project. |
 | `../CLAUDE.md` | Architecture, locked vs swappable decisions, risks, build order. Authoritative for *what we are building*; RESULTS is authoritative for *what is true*. |
 
 `archive/` is superseded material kept for provenance — the per-stage docs that RESULTS.md

@@ -1,12 +1,80 @@
-# Results — everything established, one file
+# Results
+
+---
+
+# PART 1 — Plain English
+
+## What we're building
+
+You type an instruction. A person moves realistically inside a real scanned 3D room —
+walking, and also sitting and lying on the actual furniture.
+
+Three pieces:
+1. A **tokenizer** turns motion into a small alphabet of "motion words".
+2. A **transformer** writes sentences in that alphabet — it generates the motion.
+3. A **planner** (later) reads your instruction and decides where in the room to go.
+
+Motion is generated in short segments and glued together, so the person can be told to do
+several things in a row.
+
+## What works right now
+
+- **The tokenizer handles furniture interaction far better after retraining.** Reconstructing
+  someone lying down improved ~30%, and nothing else got worse.
+- **Segments join smoothly.** Gluing two clips naively makes the body snap and teleport. Our
+  fix — telling the next segment what body pose to start from — cuts that error in half, and
+  it's as good as the tokenizer physically allows.
+- **Long chains don't fall apart.** Chaining 10 segments gives a 7–9 m walk through a real
+  room, and error does *not* build up as the chain gets longer.
+- **We dropped a component that wasn't earning its place.** The inherited scene encoder
+  (DINOv2) turned out no better than feeding raw pixels. Plain geometry — a floor plan of
+  what's solid — works nearly twice as well and is free.
+
+## What doesn't work
+
+- **The big one: the model only goes to goals that resemble its training data.** Give it a
+  target it hasn't effectively seen before, and it moves — but not toward the target. It
+  scores no better than a person who just stands still. This blocks the demo and the planner,
+  because a planner picks arbitrary targets.
+- **It doesn't avoid furniture.** It bumps into things slightly *more* often than if it just
+  walked in a straight line. Nothing in the system currently steers around obstacles.
+- **Nothing is comparable to other people's published results yet.** One benchmark number has
+  resisted five attempts to reproduce. Every number here is internally consistent but can't
+  yet be put next to another paper's.
+
+## What's next
+
+Test whether goal-following can be fixed by training with randomised goals. The theory: the
+model has only ever been shown goals it was *already* walking to, so it learned "produce
+plausible motion" instead of "go there". Cheap to test, and it decides whether the demo is
+close or far.
+
+## Reading the numbers below
+
+Six terms do most of the work in Part 2:
+
+| term | meaning |
+|---|---|
+| **oracle** | The best score physically possible — computed by feeding the *right answer* through the same machinery. If our model matches the oracle, the remaining error isn't the model's fault. |
+| **null** | The score for doing nothing (e.g. never moving). If a model can't beat this, it isn't doing anything useful. |
+| **in-distribution** | Similar to what the model was trained on. **Out-of-distribution** means unfamiliar — models often look great on the first and fail on the second. |
+| **saturated** | Our model is already as good as the oracle, so the test can no longer tell two models apart. A "no difference" result then means the test is blind, not that the models are equal. |
+| **seam** | The join between two motion segments. "Seam error" = how much the body jumps there. |
+| **drift** | How far the person ends up from where they should have. |
+
+Distances are metres (m) or millimetres (mm). Lower is better everywhere.
+
+---
+
+# PART 2 — Technical detail
 
 One section per build-order stage. Result first, then only the method details that change how
 a number should be read. Reproduce commands live in the script docstrings, not here.
 Superseded per-stage docs are in `archive/`.
 
-Every number is held-out. Every generative number is quoted against an **oracle** (ground
-truth pushed through the identical path) — a model number without its oracle is not
-interpretable, and this project has twice published one that turned out to be measuring a bug.
+Every number is held-out. Every generative number is quoted against an **oracle** — a model
+number without its oracle is not interpretable, and this project has twice published one that
+turned out to be measuring a bug.
 
 ---
 
