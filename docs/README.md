@@ -11,8 +11,8 @@ was established and how to reproduce it. Read in order; each assumes the ones be
 | [04](04_grounding.md) | Grounding probe — explicit goal conditioning | DONE |
 | [05](05_token_reextraction.md) | Re-extract tokens with the finetuned VQ-VAE | DONE |
 | [06](06_scene_probe.md) | Scene representation probe — DINOv2 vs occupancy | DONE |
-| 07 | Transformer finetune — goal conditioning + conditional continuation | **NEXT** |
-| 08 | Chaining — the last open research risk | |
+| [07](07_continuation_probe.md) | Conditional continuation probe — the chaining mechanism | DONE |
+| 08 | Chaining — multi-segment rollout + seam blend | **NEXT** |
 | 09 | Collision-guided decoding | |
 | 10 | Qwen JSON end-to-end → ScanNet demo | |
 

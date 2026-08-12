@@ -133,11 +133,23 @@ teleport at the seam — feet slide, limbs snap. Placing the root correctly with
 position but not body configuration.
 
 The working approach: the transformer generates segment k+1 CONDITIONED ON THE TAIL of
-segment k (its last pose/tokens as prefix). The model continues from the actual ending
-pose. Plus a short seam blend (4-frame overlap, linear on root, slerp on rotations) to
-clean residual discontinuity. The continuation conditioning is the real fix; the blend is
-cosmetic polish on top. This is genuine work and was underestimated in the original plan —
-treat it as one of the two hardest parts of the project.
+segment k. **VALIDATED — `docs/07_continuation_probe.md`.** Seam error 155.8 -> 71.2mm,
+landing within 0.3mm of the oracle, so the conditioning extracts everything available.
+
+Three things the probe settled, all load-bearing for step 8:
+1. **Condition on the ending BODY CONFIGURATION, not on tokens.** Segments are
+   canonicalized individually, so segment k's tokens describe a different frame and are
+   ill-posed as a prefix. Root-relative, heading-canonicalized joint positions (66-d) are
+   frame-independent. Express them in segment k+1's frame, which is computable at inference
+   because k+1's canonical frame is DEFINED by the seam pose.
+2. **The prefix pose must be ON-MANIFOLD.** A VQ-VAE-reconstructed prefix (structured
+   ~70mm error, what real chaining supplies) costs only 15mm of seam. iid Gaussian noise at
+   25mm — a fifth the magnitude, but anatomically impossible — collapses it to 331mm, flat
+   out to 200mm, i.e. off-manifold rather than degraded. So never feed a blended,
+   interpolated or smoothed pose forward as conditioning; feed the decoded one.
+3. **The seam blend is NOT cosmetic.** ~70mm of the residual is VQ-VAE reconstruction of
+   the first frame (oracle 70.9mm vs a 21.6mm canonicalization floor) and no amount of
+   better conditioning touches it. The blend is what hides it.
 
 ### 2e. Collision-guided decoding — what it is and its status (SWAPPABLE, NOT the hill)
 At inference, in the AR loop: instead of greedily taking the top next token, take the
@@ -258,9 +270,11 @@ is excluded on principle. Add what helps; justify it.
 Ordered by risk. For each, the plan is to test cheaply and pivot early, not to discover
 failure after building everything on top.
 
-1. **Chaining continuity (2d).** Conditional continuation must actually produce smooth
-   pose transitions across segments. Hard, underestimated. If continuation training does
-   not give clean seams, that is a core-mechanism problem — surface immediately.
+1. **Chaining continuity (2d).** Mechanism VALIDATED at one seam
+   (`docs/07_continuation_probe.md`) — but downgraded, not retired. What remains untested
+   is **error accumulation over a real chain**: the probe used a ground-truth previous
+   segment, and its reconstructed-prefix proxy (86mm seam, 2x goal error) is one seam's
+   worth of degradation, not N. Drift over an indefinite chain is now the open question.
 2. **Measurement validity.** Four silent frame/normalization bugs so far (section 3), two
    caught only after they had changed a conclusion. Each was missed because the check used
    could not detect it — start-error cannot see a rotation; per-frame MPJPE cannot see
@@ -295,14 +309,16 @@ everything else is engineering plus discipline about measurement (#2).
 6. ~~**Scene representation probe**~~ DONE — `docs/06_scene_probe.md`. DINOv2 carries no
    usable signal on top-down renders (it does not beat its own unencoded input); occupancy
    geometry nearly doubles it. Scene encoder swapped accordingly, see section 4.
+7. ~~**Conditional continuation probe**~~ DONE — `docs/07_continuation_probe.md`. Seam
+   error halved and at the oracle floor. All three conditioning inputs are now settled by
+   evidence: relative-frame goal (2f), occupancy scene (section 4), seam pose (2d).
 
-**-> YOU ARE HERE. Next: step 7.**
+**-> YOU ARE HERE. Next: step 8.**
 
-7. **Transformer finetune** on `tokens_finetuned/`: relative-frame goal conditioning
-   (proven, 2f) + conditional continuation (unproven, the real work).
-8. **Chaining**: conditional continuation across segments + SE(2) rollout + seam blend.
-   Two segments connect with continuous body pose. **This is the last real research risk.**
-   Express the prefix in segment k+1's own start frame — same lesson as 2f.
+8. **Chaining**: multi-segment rollout + SE(2) + seam blend. The mechanism is proven at one
+   seam; what is unproven is **accumulation over N segments**. Measure seam error and goal
+   error as a function of chain length, and feed the DECODED pose forward, never a blended
+   one (2d point 2).
 9. **Collision-guided decoding** (+ rejection-sampling floor). Non-collision improves.
 10. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
 
