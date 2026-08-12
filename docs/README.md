@@ -12,8 +12,8 @@ was established and how to reproduce it. Read in order; each assumes the ones be
 | [05](05_token_reextraction.md) | Re-extract tokens with the finetuned VQ-VAE | DONE |
 | [06](06_scene_probe.md) | Scene representation probe — DINOv2 vs occupancy | DONE |
 | [07](07_continuation_probe.md) | Conditional continuation probe — the chaining mechanism | DONE |
-| 08 | **Transformer finetune — the actual model, all conditioning together** | **NEXT** |
-| 09 | Chaining — multi-segment rollout + seam blend | |
+| [08](08_transformer_finetune.md) | Transformer finetune — all conditioning together | DONE (scene arm unevaluated) |
+| 09 | Chaining — multi-segment rollout + seam blend | **NEXT** |
 | 10 | Collision-guided decoding | |
 | 11 | Qwen JSON end-to-end → ScanNet demo | |
 | 12 | Benchmark comparison + generation FID | |

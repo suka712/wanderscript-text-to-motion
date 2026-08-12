@@ -316,9 +316,17 @@ everything else is engineering plus discipline about measurement (#2).
    error halved and at the oracle floor. All three conditioning inputs are now settled by
    evidence: relative-frame goal (2f), occupancy scene (section 4), seam pose (2d).
 
-**-> YOU ARE HERE. Next: step 8.**
+8. ~~**Transformer finetune — the actual model**~~ DONE — `docs/08_transformer_finetune.md`.
+   Trains healthily on all conditioning together and matches the probes. **But the scene arm
+   is UNEVALUATED**: seam and goal error are saturated at the oracle, and the natural metric
+   (non-collision) is invalid on HUMANISE, where being inside furniture is the objective —
+   ground-truth `lie` motion "collides" 100% of the time. A valid metric needs occupancy
+   rebuilt with the TARGET OBJECT EXCLUDED (see 08). That is also a prerequisite for step 10
+   and for any PSMo/AffordMotion comparison.
 
-8. **Transformer finetune — THE ACTUAL MODEL.** Steps 4/6/7 are PROBES: each isolates one
+**-> YOU ARE HERE. Next: step 9, or the target-excluded occupancy that 08 and 10 both need.**
+
+<details><summary>original step 8 text</summary> Steps 4/6/7 are PROBES: each isolates one
    conditioning input, at a 4000-iteration budget, single seed. None of them is the system.
    This step trains one model on all of it — text + relative goal + occupancy crop + seam
    pose — on `tokens_finetuned/`, at a real training budget, and reports held-out numbers
@@ -326,6 +334,7 @@ everything else is engineering plus discipline about measurement (#2).
    fed to a transformer at all** (step 6 validated the representation with a linear probe on
    action classification, which is not the same claim). Expect the combination to be worse
    than the per-probe numbers suggest; if it is not, be suspicious.
+   </details>
 9. **Chaining**: multi-segment rollout + SE(2) + seam blend, on the step-8 model. Mechanism
    proven at one seam; **accumulation over N segments is unproven**. Measure seam and goal
    error as a function of chain length, and feed the DECODED pose forward, never a blended
