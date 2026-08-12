@@ -99,8 +99,8 @@ Stage B — **Transformer finetune (conditional continuation).**
      pose of segment k-1). This is what makes chaining actually work — see 2d. This is a
      training-time change, not an inference trick; the model must LEARN to continue from an
      arbitrary ending pose.
-- Scene conditioning (DINOv2 features of a scene render) also enters here — but see the
-  SWAPPABLE note in section 4; do not build deep dependence on it before it is shown to help.
+- Scene conditioning also enters here, as an occupancy crop in the segment's own start
+  frame (NOT DINOv2 features — see section 4 and `docs/06_scene_probe.md`).
 - STRICT ORDERING: finetuning the VQ-VAE changes the codebook, which invalidates all
   previously extracted tokens. After Stage A you MUST re-extract tokens with the finetuned
   VQ-VAE, THEN train the transformer on those new tokens. Training the transformer on stale
@@ -236,11 +236,14 @@ LOAD-BEARING (changing these = re-deciding the project):
 - Strict training order: VQ-VAE -> re-extract tokens -> transformer.
 
 SWAPPABLE (change freely if evidence says so — surface it, don't agonize):
-- **Scene representation.** A top-down BEV render + DINOv2 was inherited from another
-  paper. DINOv2 is trained on natural images, so top-down floorplans are out of its
-  distribution and may give weak features. Nothing here is locked. Treat the scene-feature
-  encoder as an experiment; if the grounding probe shows it is not carrying weight, replace
-  it (different view, different encoder, or drop the image and rely on explicit goal coords).
+- ~~**Scene representation.**~~ **DECIDED 2026-08-12, was swappable, now settled** —
+  `docs/06_scene_probe.md`. The inherited BEV-RGB + DINOv2 encoder was probed and does not
+  carry usable scene signal: it fails to beat its own unencoded input (37.6% / 34.3% vs
+  36.4% raw pixels, 26.4% prior), and ViT-B scores *below* ViT-S, so it is the domain, not
+  capacity. The **binary occupancy raster, cropped in the agent's own frame**, reaches 63.0%
+  on the same probe. Scene conditioning now uses occupancy. This also removes a ViT from the
+  inference loop and reuses the raster that collision-guided decoding already needs. The RGB
+  render stays available for figures, not for conditioning.
 - Collision-guided decoding (see 2e) and its fallbacks.
 - MLLM choice (Qwen3-VL 8B) — swappable if planning quality is poor.
 - Seam-blend details.
@@ -289,15 +292,19 @@ everything else is engineering plus discipline about measurement (#2).
    re-run on the new tokenizer confirms goal-error tracks the lower oracle floor
    (0.164 -> 0.132 m) with no change to the grounding mechanism.
 
-**-> YOU ARE HERE. Next: step 6.**
+6. ~~**Scene representation probe**~~ DONE — `docs/06_scene_probe.md`. DINOv2 carries no
+   usable signal on top-down renders (it does not beat its own unencoded input); occupancy
+   geometry nearly doubles it. Scene encoder swapped accordingly, see section 4.
 
-6. **Transformer finetune** on `tokens_finetuned/`: relative-frame goal conditioning
+**-> YOU ARE HERE. Next: step 7.**
+
+7. **Transformer finetune** on `tokens_finetuned/`: relative-frame goal conditioning
    (proven, 2f) + conditional continuation (unproven, the real work).
-7. **Chaining**: conditional continuation across segments + SE(2) rollout + seam blend.
+8. **Chaining**: conditional continuation across segments + SE(2) rollout + seam blend.
    Two segments connect with continuous body pose. **This is the last real research risk.**
    Express the prefix in segment k+1's own start frame — same lesson as 2f.
-8. **Collision-guided decoding** (+ rejection-sampling floor). Non-collision improves.
-9. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
+9. **Collision-guided decoding** (+ rejection-sampling floor). Non-collision improves.
+10. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
 
 ## 7. Done criteria
 1. ~~Baseline matches T2M-GPT paper~~ DONE for reconstruction; harness trusted.
@@ -324,10 +331,12 @@ everything else is engineering plus discipline about measurement (#2).
     explicitly — non-interactive shells miss it). The `afford` conda env was raw-copied
     from the 4090, so bare `pip` is broken; use `~/anaconda3/envs/afford/bin/python -m pip`.
     Paths: `~/wander_data/motion_data`, `~/Khiem/T2M-GPT`, repo `~/Khiem/wanderscript-text-to-motion`.
-  - **Network**: both boxes are behind an upstream **per-TCP-flow rate limit (~10-30 KB/s
-    per connection)**, not fixable locally. `git clone`/`curl` crawl while browsers feel
-    fine. For anything large, rsync from the other box over the Tailscale direct path
-    (~10 MB/s). This repo is tiny, so `git pull`/`push` is unaffected.
+  - **Network**: both boxes are behind an upstream **per-TCP-flow** rate limit, so a
+    single-connection `git clone`/`curl` crawls. It is NOT a bandwidth cap: `aria2c -x8 -s8`
+    pulled 88 MB in <25 s and 346 MB in ~2 min from a Range-capable host. Use aria2c for
+    large single files, rsync from the other box over the Tailscale direct path for
+    directories, and expect plain `git clone` of a big repo to be slow. This repo is tiny,
+    so `git pull`/`push` is unaffected.
 - Benchmarks: PSMo + AffordMotion (reported HUMANISE numbers; PSMo has no public code, so
   state test-protocol differences honestly). SceMoS is related work only — it reports on
   TRUMANS, a different dataset; no numeric comparison.
