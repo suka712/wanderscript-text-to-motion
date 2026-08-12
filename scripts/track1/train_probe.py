@@ -96,7 +96,7 @@ MAX_MOTION_LENGTH = BLOCK_SIZE  # 51, matches T2M-GPT's own convention for unit_
 MOT_END_IDX = NB_CODE
 MOT_PAD_IDX = NB_CODE + 1
 
-COND_EXTRA_DIMS = {"abs": 6, "rel": 2}
+COND_EXTRA_DIMS = {"abs": 6, "rel": 2, "rel_prefix": 2 + 66}
 
 
 def cond_extra_raw(d, cond_mode):
@@ -106,6 +106,14 @@ def cond_extra_raw(d, cond_mode):
         return np.concatenate([d["start"], d["goal"]]).astype(np.float32)
     if cond_mode == "rel":
         return world_to_local_xy(d["goal"], d["start"]).astype(np.float32)
+    if cond_mode == "rel_prefix":
+        # relative goal (2) + the previous segment's ending body configuration
+        # (66 = 22 joints x 3, root-relative and heading-canonicalized, hence
+        # frame-independent -- see scripts/continuation/prepare_continuation_data.py)
+        return np.concatenate([
+            world_to_local_xy(d["goal"], d["start"]),
+            d["prefix_pose"],
+        ]).astype(np.float32)
     raise ValueError(cond_mode)
 
 
@@ -181,7 +189,7 @@ def load_pretrained(trans_encoder, conditioned, cond_dim=0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--conditioned", action="store_true")
-    ap.add_argument("--cond-mode", choices=["rel", "abs"], default="rel",
+    ap.add_argument("--cond-mode", choices=["rel", "abs", "rel_prefix"], default="rel",
                     help="frame the goal is expressed in; see module docstring. "
                          "Ignored when --conditioned is not set.")
     ap.add_argument("--iters", type=int, default=4000)
