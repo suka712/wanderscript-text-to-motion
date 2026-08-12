@@ -20,16 +20,23 @@ ssh train-3090 'pgrep -af train_probe.py; nvidia-smi --query-gpu=utilization.gpu
 
 ## Next action — pick one
 
-**A. Target-excluded occupancy (recommended).** Rebuild the occupancy raster per clip with
-the goal object's ScanNet instance removed, so collision means "hit something that was not
-the target". Unblocks three things at once: the step-8 scene ablation, step 10
-collision-guided decoding, and any PSMo/AffordMotion comparison. HUMANISE gives `object_id`;
-ScanNet meshes carry instance segmentation. `src/bev_render.py::render_occupancy`
-rasterizes mesh triangles directly, so instance filtering goes there.
+**Step 9, chaining.** Multi-segment rollout + SE(2) + seam blend on the step-8 `full` model.
+Two things ride on it, not one:
 
-**B. Step 9, chaining.** Multi-segment rollout + SE(2) + seam blend on the step-8 model.
-Open question is accumulation over N segments; the mechanism is proven at one seam only.
-Feed the DECODED pose forward, never a blended one (CLAUDE.md 2d point 2).
+1. Accumulation over N segments — the open research question. The continuation mechanism is
+   proven at ONE seam only (docs/07). Feed the DECODED pose forward, never a blended one
+   (CLAUDE.md 2d point 2).
+2. It is the only way to evaluate scene conditioning. Chained rollouts are what produce
+   multi-metre paths; HUMANISE segments alone average 0.63m, which is why every step-8
+   evaluation came back empty (docs/08). Re-run `eval_collision.py` on chained rollouts.
+
+The collision metric is ready: `~/wander_data/bev_tall_cache` (0.9m threshold, 643 scenes),
+`scripts/continuation/eval_collision.py` already points at it.
+
+Not worth doing: target-instance exclusion. Attempted and blocked — no ScanNet instance
+segmentation on either box. The connected-component proxy was tried and failed (331/400 clips
+merged furniture with walls); it survives as `src/target_occupancy.py` with the failure
+documented so nobody retries it.
 
 ## Where things live on the 3090
 

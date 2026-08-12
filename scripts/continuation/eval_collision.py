@@ -9,6 +9,17 @@ Occupancy conditioning tells the model where the furniture is; goal error only
 asks whether it reached a coordinate, and is perfectly happy with a path that
 goes through a sofa. Collision is what a scene arm is FOR.
 
+WHICH MAP. Scored against the TALL-obstacle raster (obstacles from 0.9m up),
+not the default 0.12m one. At 0.12m the metric is void on this dataset --
+ground-truth `lie` motion collides 100% of the time because the person is on
+the bed, and being on the target furniture is the OBJECTIVE (docs/08). At 0.9m
+walls survive while beds/sofas/chairs drop out, and ground-truth collision
+falls to ~0.1% for walk. See docs/09 for the threshold sweep.
+
+Unlike seam/goal error, this metric has headroom in the useful direction: the
+oracle is near ZERO, so a model that steers badly can be much worse and the
+difference is visible.
+
 METRIC. Place the generated motion in the world with SE(2), map the root
 trajectory to occupancy pixels with the renderer's own validated world->pixel
 mapping, and report:
@@ -45,7 +56,7 @@ from se2_utils import se2_place  # noqa: E402
 from train_probe import build_transformer, cond_extra  # noqa: E402
 
 T2M = os.environ.get("WANDER_T2M_GPT_ROOT")
-BEV = os.path.expanduser("~/wander_data/bev_cache")
+BEV = os.path.expanduser("~/wander_data/bev_tall_cache")  # TALL-obstacle map, 0.9m
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 
 

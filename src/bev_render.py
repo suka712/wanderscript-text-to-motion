@@ -125,7 +125,8 @@ def render_rgb(mesh: trimesh.Trimesh, ext: BEVExtent) -> np.ndarray:
     return color
 
 
-def render_occupancy(mesh: trimesh.Trimesh, ext: BEVExtent) -> np.ndarray:
+def render_occupancy(mesh: trimesh.Trimesh, ext: BEVExtent,
+                     obstacle_height_m: float = None) -> np.ndarray:
     """Binary occupancy raster: True = occupied/blocked, False = walkable.
 
     Computed by rasterizing mesh triangles directly (not the GL depth
@@ -135,7 +136,15 @@ def render_occupancy(mesh: trimesh.Trimesh, ext: BEVExtent) -> np.ndarray:
     drawn on top. Anything not covered by either (outside the room's
     footprint, or a genuine hole in the scan) stays occupied by default --
     the safe assumption for a robot that doesn't know what's there.
+
+    obstacle_height_m raises the threshold above which geometry counts as an
+    obstacle (default OBSTACLE_HEIGHT_M = 0.12). Raising it to ~1.0 yields a
+    TALL-obstacle map: walls, doors and cabinets survive, while beds, sofas,
+    chairs and tables drop out. That is the map to score collisions against on
+    an interaction dataset, where being on top of low furniture is the
+    objective rather than a failure -- see docs/08 and docs/09.
     """
+    obstacle_height_m = OBSTACLE_HEIGHT_M if obstacle_height_m is None else obstacle_height_m
     import matplotlib
 
     matplotlib.use("Agg")
@@ -148,9 +157,9 @@ def render_occupancy(mesh: trimesh.Trimesh, ext: BEVExtent) -> np.ndarray:
     tri_z = verts[faces][:, :, 2] - floor_z  # (F, 3) height above floor per vertex
     tri_xy = verts[faces][:, :, :2]  # (F, 2, ... ) -> actually (F,3,2)
 
-    floor_faces = tri_z.max(axis=1) <= OBSTACLE_HEIGHT_M
+    floor_faces = tri_z.max(axis=1) <= obstacle_height_m
     obstacle_faces = (tri_z.min(axis=1) <= CEILING_CUTOFF_M) & (
-        tri_z.max(axis=1) > OBSTACLE_HEIGHT_M
+        tri_z.max(axis=1) > obstacle_height_m
     )
 
     dpi = 100
@@ -180,10 +189,13 @@ def render_occupancy(mesh: trimesh.Trimesh, ext: BEVExtent) -> np.ndarray:
     return ~walkable  # True = occupied
 
 
-def render_scene_bev(scene_id: str, resolution_px: int = 512):
+def render_scene_bev(scene_id: str, resolution_px: int = 512,
+                     tall_height_m: float = None):
     """Returns (rgb, occupancy, extent) for one ScanNet scene, pixel-aligned."""
     mesh = _load_scene_mesh(scene_id)
     ext = _make_extent(mesh, resolution_px)
     rgb = render_rgb(mesh, ext)
     occupancy = render_occupancy(mesh, ext)
-    return rgb, occupancy, ext
+    if tall_height_m is None:
+        return rgb, occupancy, ext
+    return rgb, occupancy, render_occupancy(mesh, ext, tall_height_m), ext

@@ -59,6 +59,10 @@ Understand both before touching either.
   2. World-frame root trajectory — per-frame absolute (x, y, yaw), Z-up ScanNet frame.
      Used for placement, chaining, goal/start conditioning, and all scene metrics.
 - Yaw is always represented as `(sin, cos)`, never a raw scalar (avoids wraparound).
+- **Collision is scored against the 0.9m TALL-obstacle raster**, never the default 0.12m one.
+  At 0.12m the metric is void on an interaction dataset: ground-truth `lie` motion "collides"
+  100% of the time because the person is on the bed, and being on the target IS the objective.
+  At 0.9m walls survive and low furniture drops out. See 08 for the threshold sweep.
 - **Two yaw conventions, 90° apart. LOAD-BEARING.** Canonicalized frame 0 faces +Z in
   HumanML3D's Y-up frame = **−Y in Z-up world = yaw −π/2**; but `compute_track2` defines
   **world yaw 0 = +X**. So placement rotates by **`yaw0 + π/2`** (`se2_utils.se2_place`,
@@ -318,13 +322,15 @@ everything else is engineering plus discipline about measurement (#2).
 
 8. ~~**Transformer finetune — the actual model**~~ DONE — `docs/08_transformer_finetune.md`.
    Trains healthily on all conditioning together and matches the probes. **But the scene arm
-   is UNEVALUATED**: seam and goal error are saturated at the oracle, and the natural metric
-   (non-collision) is invalid on HUMANISE, where being inside furniture is the objective —
-   ground-truth `lie` motion "collides" 100% of the time. A valid metric needs occupancy
-   rebuilt with the TARGET OBJECT EXCLUDED (see 08). That is also a prerequisite for step 10
-   and for any PSMo/AffordMotion comparison.
+   is UNEVALUATED AND UNTESTABLE ON THIS DATA**. A correct collision metric now exists (the
+   0.9m TALL-obstacle map, see 08), but **only 25 of 2962 HUMANISE segment clips (0.8%) walk
+   further than 1.5m** — mean displacement is 0.63m. Goal error saturates, and collision is
+   determined by the START POSE rather than the path (NULL "never move" scores the same as
+   every model). This is the absence of a test, NOT evidence that occupancy fails.
 
-**-> YOU ARE HERE. Next: step 9, or the target-excluded occupancy that 08 and 10 both need.**
+**-> YOU ARE HERE. Next: step 9 — and it is the unlock, not just the next step. Chaining is
+what produces multi-metre paths, and therefore the first setting where the scene arm can be
+measured at all. Re-run the scene ablation on chained rollouts.**
 
 <details><summary>original step 8 text</summary> Steps 4/6/7 are PROBES: each isolates one
    conditioning input, at a 4000-iteration budget, single seed. None of them is the system.
