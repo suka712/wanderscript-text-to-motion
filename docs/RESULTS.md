@@ -29,25 +29,24 @@ several things in a row.
 - **We dropped a component that wasn't earning its place.** The inherited scene encoder
   (DINOv2) turned out no better than feeding raw pixels. Plain geometry — a floor plan of
   what's solid — works nearly twice as well and is free.
+- **It now walks to targets it was never trained on.** This was broken as of yesterday — the
+  model moved but not toward the goal. Training it on randomly-cut clips fixed it: error on
+  unfamiliar targets more than halved, and it now walks the distance it is told to.
 
 ## What doesn't work
 
-- **The big one: the model only goes to goals that resemble its training data.** Give it a
-  target it hasn't effectively seen before, and it moves — but not toward the target. It
-  scores no better than a person who just stands still. This blocks the demo and the planner,
-  because a planner picks arbitrary targets.
 - **It doesn't avoid furniture.** It bumps into things slightly *more* often than if it just
-  walked in a straight line. Nothing in the system currently steers around obstacles.
+  walked in a straight line. Nothing in the system currently steers around obstacles — that is
+  the next piece of work.
 - **Nothing is comparable to other people's published results yet.** One benchmark number has
   resisted five attempts to reproduce. Every number here is internally consistent but can't
   yet be put next to another paper's.
 
 ## What's next
 
-Test whether goal-following can be fixed by training with randomised goals. The theory: the
-model has only ever been shown goals it was *already* walking to, so it learned "produce
-plausible motion" instead of "go there". Cheap to test, and it decides whether the demo is
-close or far.
+Teach it to steer around furniture. Everything else is in place: it goes where it is told,
+segments join cleanly, and chains hold together. Bumping into things is the last gap before a
+demo worth showing.
 
 ## Reading the numbers below
 
@@ -377,6 +376,52 @@ sampled independently of the data, the correlation is gone and so is the behavio
 
 N>3 chaining untested (HUMANISE clips cannot be cut further). Free-waypoint rollouts use
 `walk` clips only. One training run per arm throughout.
+
+## 10 · Goal augmentation — DONE, fixes §9's blocking problem
+
+§9 found the model followed familiar goals but not arbitrary ones. Hypothesis: it has only
+ever seen the goal it was *already* walking to, so it learned to produce plausible motion
+rather than to go somewhere.
+
+**Truncation augmentation** (`train_probe --goal-aug 0.5`): cut the token sequence at a random
+length L and set the goal to the world position at frame 4L−1, so goal and target motion are
+truncated **together**. One clip then supplies many (goal, motion) pairs at varied distance
+and direction.
+
+**The obvious alternative is wrong and is recorded so nobody tries it:** randomising the goal
+while keeping the same target motion teaches the model to IGNORE the goal, since that motion
+would then be correct for every goal.
+
+### Result — arbitrary goals, 30 rollouts × 10 chained segments
+
+| | goal err | vs 0.925 m null | path vs commanded |
+|---|---|---|---|
+| step-8 model | 0.883 m | +4.5% | 7.67 / 9.25 m |
+| **+ goal augmentation** | **0.374 m** | **−59.6%** | **9.27 / 9.25 m** |
+
+Goal error more than halves, and path length now matches the commanded distance almost
+exactly — it walks as far as it is told, which it previously did not.
+
+### No regression in-distribution
+
+| | seam | goal |
+|---|---|---|
+| step-8 model | 71.7 mm | 0.0584 m |
+| + goal augmentation | 73.7 mm | **0.0560 m** |
+| ORACLE | 70.9 mm | 0.0544 m |
+
+Familiar-goal accuracy is unchanged (marginally better); seam is 2 mm worse, within noise.
+The fix is targeted — it bought out-of-distribution goal-following without costing anything.
+
+### What it did NOT fix, as expected
+
+Collision 2.10% vs 2.07% before, against the 1.09% straight-line control. Augmentation
+addresses *where the model goes*, not *what it goes around*. Obstacle avoidance remains open
+and is step 11's job.
+
+**Remaining gap:** 0.374 m on arbitrary goals vs 0.132 m on familiar ones. Better, not equal.
+Candidate next moves if it needs to close further: raise `--goal-aug` above 0.5, or add an
+explicit distance-to-goal training objective rather than relying on token likelihood alone.
 
 ---
 

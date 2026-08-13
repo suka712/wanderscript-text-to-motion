@@ -1,64 +1,57 @@
 # In flight — read this if you are picking up cold
 
-Volatile state that is NOT captured by RESULTS.md: what is running right now, where things
-live on the boxes, and the next concrete action.
-**Update or delete this file when the work it describes lands.**
+Volatile state that is NOT captured by RESULTS.md: what is running, where things live on the
+boxes, and the next concrete action. **Update or delete this file when its work lands.**
 
-Last updated: 2026-08-12, after step 9.
+Last updated: 2026-08-13, after step 10.
 
 ---
 
-## Nothing is running. Box is idle (270 MiB, no jobs).
+## Nothing is running.
 
 ```
 ssh train-3090 'pgrep -af "train_probe|demo_rollout|render_"; nvidia-smi --query-gpu=memory.used --format=csv,noheader'
 ```
 
-**Gotcha when writing a wait loop.** `while pgrep -f foo.py >/dev/null; do sleep 60; done`
-never exits: the loop's own command line contains "foo.py", so pgrep matches the watcher
-itself. Several waiters this session hung on that and had to be killed by PID. Use a pattern
-that cannot match the watcher — e.g. `pgrep -f "[f]oo.py"` — or poll a sentinel in the log
-(`grep -q '^saved ' log`) instead of the process table.
+**Wait-loop gotcha.** `while pgrep -f foo.py; do sleep 60; done` never exits — the loop's own
+command line contains "foo.py" so pgrep matches itself. Use `pgrep -f "[f]oo.py"` or poll a
+log sentinel (`grep -q '^saved ' log`).
 
-## Next action — goal generalization, BEFORE steps 10/11
+## Next action — collision-guided decoding (step 11)
 
-RESULTS §9 found the model follows in-distribution goals (−78.9% vs a never-move null) but
-**arbitrary goals not at all** (+4.5%, i.e. no better than standing still). Real clip text
-does not fix it, so it is the goals, not the text. This gates the demo and step 11, because
-an MLLM planner emits arbitrary coordinates.
+**It is the only thing gating a demo.** Goal-following and chaining are both fixed; the model
+goes where it is told and chains cleanly, but it does not steer around furniture.
 
-Cheapest test of the leading hypothesis — the model never saw a goal that was not the endpoint
-it was already reaching:
+Target, already measured: beat the **1.09%** straight-line control. Current models sit at
+2.07-2.61%, i.e. worse than walking directly between waypoints.
 
-1. Retrain `--cond-mode full` with **goal augmentation**: with probability p, replace the
-   training goal with a perturbed or resampled one and keep the target motion. If goal-error
-   on free waypoints drops below the null, the diagnosis is confirmed and the fix is data.
-2. Re-measure with `scripts/chaining/demo_rollout.py --n-rollouts 30 --min-step 0.6
-   --max-step 1.2`, which prints the straight-line control alongside.
-3. The never-move null for those settings is ~0.925 m. Beat it by a wide margin or the
-   problem is not solved.
+Approach per CLAUDE.md 2e: at each AR step take top-k tokens, decode each candidate's root
+movement, check against the 0.9 m tall-obstacle map, re-rank to prefer non-colliding.
+**Rejection sampling over whole chained rollouts is the guaranteed floor** — generate N
+chains, keep the lowest-collision one — and is worth measuring first as a baseline.
 
-Waypoint spacing must stay a **band** at the trained displacement scale; "anywhere beyond
-min_step" gives ~4 m hops that the model ignores, and the resulting error says nothing.
-
-Then step 10 (collision-guided decoding) — it now has a measured justification: passive scene
-conditioning does not steer, and both models collide MORE than the 1.09% straight-line
-control. That is the number to beat.
+Build on `~/wander_data/step10/checkpoints/goalaug` (the goal-augmented model, best available).
+Measure with `scripts/chaining/demo_rollout.py --n-rollouts 30 --min-step 0.6 --max-step 1.2`,
+which prints the straight-line control alongside.
 
 ## Ready to use
 
-- Collision metric: `~/wander_data/bev_tall_cache` (0.9 m threshold, 643 scenes);
-  `scripts/continuation/eval_collision.py` points at it. **Never score on the 0.12 m map.**
-- Chaining: `scripts/chaining/{rollout,eval_accumulation,demo_rollout,render_chain_video}.py`.
-- Step-8 models: `~/wander_data/step8/checkpoints/{full,noscene}/`.
+- **Best model**: `~/wander_data/step10/checkpoints/goalaug` — full conditioning + goal
+  augmentation. 0.374 m on arbitrary goals, 0.0560 m on familiar ones, 78 mm seams.
+- **Collision map**: `~/wander_data/bev_tall_cache` (0.9 m threshold, 643 scenes).
+  **Never score on the 0.12 m map** — it counts sitting on the target as a collision.
+- **Chaining**: `scripts/chaining/{rollout,eval_accumulation,demo_rollout,render_chain_video}.py`
+- **Data with goal augmentation support**: `~/wander_data/step10/tokens` (carries `xy_traj`)
 
 ## Not worth redoing
 
 - **Target-instance exclusion for collision** — blocked, no ScanNet instance segmentation on
-  either box. The connected-component proxy failed (331/400 clips merged furniture with
-  walls); it survives as `src/target_occupancy.py` with the failure documented.
+  either box. The connected-component proxy failed (331/400 clips merged furniture with walls);
+  it survives as `src/target_occupancy.py` with the failure documented.
 - **Scene ablation on single HUMANISE segments** — every metric is saturated or
-  start-pose-determined there (RESULTS §8). Only chained rollouts can resolve it.
+  start-pose-determined there (RESULTS §8). Only chained rollouts resolve it.
+- **Randomising the goal while keeping the motion** — teaches the model to ignore the goal.
+  Truncation augmentation is the correct form (RESULTS §10).
 
 ## Where things live on the 3090
 

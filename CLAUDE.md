@@ -228,7 +228,7 @@ failure after building everything on top.
    is **error accumulation over a real chain**: the probe used a ground-truth previous
    segment, and its reconstructed-prefix proxy (86mm seam, 2x goal error) is one seam's
    worth of degradation, not N. Drift over an indefinite chain is now the open question.
-3. **Measurement validity.** Five silent convention bugs so far (ledger in RESULTS.md), two
+4. **Measurement validity.** Five silent convention bugs so far (ledger in RESULTS.md), two
    caught only after they had changed a conclusion. Each was missed because the check used
    could not detect it — start-error cannot see a rotation; per-frame MPJPE cannot see
    cumulative drift. **MANDATORY: every pipeline that emits a number gets an oracle
@@ -236,17 +236,17 @@ failure after building everything on top.
    output BEFORE reading any model number off it. If the oracle is not small relative to
    the effect you are measuring, you have no measurement. Highest-frequency failure mode
    in this project, ahead of any algorithmic risk.
-4. **Collision-guided decoding (2e).** May not steer. Not the hill — has fallbacks and
+5. **Collision-guided decoding (2e).** May not steer. Not the hill — has fallbacks and
    demotes to an ablation. Low strategic risk by design.
-5. **Shared GPU.** The 4090 is shared; the 3090 is not. See section 8.
-6. ~~Goal grounding~~ RETIRED 2026-08-12 — probe passed, see 2f. Do not pivot to
+6. **Shared GPU.** The 4090 is shared; the 3090 is not. See section 8.
+7. ~~Goal grounding~~ RETIRED 2026-08-12 — probe passed, see 2f. Do not pivot to
    trajectory-first.
-7. ~~VQ-VAE joint finetune balance~~ RETIRED 2026-08-12 — Track 2 passed at 1:1 sampling,
+8. ~~VQ-VAE joint finetune balance~~ RETIRED 2026-08-12 — Track 2 passed at 1:1 sampling,
    lr 2e-5, no forgetting.
 
-Meta: chaining is retired; goal-following on ARBITRARY goals replaced it as the top risk, and
-it is the one that gates a usable demo. Everything else is engineering plus discipline about
-measurement (#3).
+Meta: chaining and goal-following are both retired. **Obstacle avoidance is the only thing
+between here and a demo worth showing.** Everything else is engineering plus discipline about
+measurement (#4).
 
 ---
 
@@ -264,11 +264,13 @@ Step 8 is the first model trained on all of it together.
    MORE than the straight-line waypoint path (2.07% / 2.61% vs 1.09%), so passive occupancy
    conditioning does not confer avoidance.
 
-**-> YOU ARE HERE. Next: goal generalization (risk #1) BEFORE step 10 or 11.** On arbitrary
-goals the model is no better than standing still, which breaks the demo and the MLLM stage.
-Try goal augmentation during training and re-measure against the never-move null. Step 10
-(collision-guided decoding) also now has a measured justification — passive scene conditioning
-does not steer, and the 1.09% straight-line control is the number to beat.
+10. ~~**Goal augmentation**~~ DONE — RESULTS §10. Truncation augmentation fixed
+    goal-following on arbitrary goals (0.883 → 0.374 m) with no in-distribution cost.
+
+**-> YOU ARE HERE. Next: collision-guided decoding (step 11).** It is now the only thing
+gating a demo, and it has a measured target: beat the 1.09% straight-line control. Rejection
+sampling over chained rollouts is the guaranteed floor. Model to build on:
+`~/wander_data/step10/checkpoints/goalaug`.
 
 <details><summary>original step 9 text</summary> Multi-segment rollout + SE(2)
    + seam blend on the step-8 `full` model. Two things ride on it:
