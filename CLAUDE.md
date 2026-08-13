@@ -4,10 +4,18 @@ Authoritative project document. Read fully every session before acting. This is 
 ground truth for goals, architecture, what is validated, and where the project is likely
 to fail. Step specs are separate and disposable; this file is not.
 
-**Status 2026-08-12.** Steps 1-8 done. Both original research bets passed: goal grounding
-works, conditional continuation works. **Next: step 9, chaining** — and it is the unlock, not
-just the next step (see 6). Nothing has been chained yet; no number here is comparable to
-published work yet.
+**Status 2026-08-13.** Steps 1-10 done. All three original research bets passed — goal
+grounding, conditional continuation, and chaining (which does not accumulate error). Goal
+following on *arbitrary* goals was broken and is now fixed (§10).
+
+**Next: step 11, interaction in a chain.** Every chained rollout so far is walk-only, so
+done-criteria 4 and 5 are NOT met and §1 calls a walk-only demo a failure. After that,
+obstacle avoidance — nothing in the system steers. No number here is comparable to published
+work yet.
+
+*(This header goes stale faster than anything else in the file. Three stale "next step"
+pointers were found in one day. If it disagrees with `docs/IN_FLIGHT.md`, IN_FLIGHT wins —
+and fix this line.)*
 
 **Read `docs/IN_FLIGHT.md` FIRST** — running jobs, on-disk layout, next command.
 `docs/RESULTS.md` has every established number with the oracle it is quoted against. This
