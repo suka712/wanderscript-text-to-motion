@@ -251,45 +251,35 @@ measurement (#4).
 ---
 
 ## 6. Build order
-Steps 1-8 DONE — numbers in `docs/RESULTS.md` §1-8. In brief: plumbing, baseline calibration
-(reconstruction only), tokenizer finetune, grounding probe, token re-extraction, scene-encoder
-probe, continuation probe, and the combined transformer.
 
-Note steps 4/6/7 were **probes** — one conditioning input each, small budget, single seed.
-Step 8 is the first model trained on all of it together.
+**Done (1-10).** Numbers in `docs/RESULTS.md` §1-10: plumbing · baseline calibration
+(reconstruction only) · tokenizer finetune · grounding probe · token re-extraction · scene
+probe · continuation probe · combined transformer · chaining · goal augmentation.
 
-9. ~~**Chaining**~~ DONE — RESULTS §9. **No error accumulation** (drift flat across N=1-3
-   while the oracle's grows); seams hold at ~69-80mm; 10 chained segments give 7.7m paths in
-   real rooms. Risk #1 retired for N≤3. **But neither model avoids obstacles** — both collide
-   MORE than the straight-line waypoint path (2.07% / 2.61% vs 1.09%), so passive occupancy
-   conditioning does not confer avoidance.
-
-10. ~~**Goal augmentation**~~ DONE — RESULTS §10. Truncation augmentation fixed
-    goal-following on arbitrary goals (0.883 → 0.374 m) with no in-distribution cost.
-
-**-> YOU ARE HERE. Next: collision-guided decoding (step 11).** It is now the only thing
-gating a demo, and it has a measured target: beat the 1.09% straight-line control. Rejection
-sampling over chained rollouts is the guaranteed floor. Model to build on:
+Steps 4/6/7 were **probes** — one conditioning input each, small budget, single seed. Step 8
+was the first model trained on all of it; step 10 is the current best,
 `~/wander_data/step10/checkpoints/goalaug`.
 
-<details><summary>original step 9 text</summary> Multi-segment rollout + SE(2)
-   + seam blend on the step-8 `full` model. Two things ride on it:
-   (a) **accumulation over N segments is unproven** — the mechanism is validated at ONE seam
-   with a ground-truth previous segment; (b) it is the only way to evaluate scene
-   conditioning, because chained rollouts are what produce multi-metre paths and HUMANISE
-   segments average 0.63 m. Feed the DECODED pose forward, never a blended one (2d point 2).
-   Re-run `eval_collision.py` (0.9 m map, cache ready) on the chained rollouts.
-   </details>
-10. **Collision-guided decoding** (+ rejection-sampling floor). SWAPPABLE, see 2e. Beat the
-    1.09% straight-line control; rejection sampling over chained rollouts is the guaranteed
-    floor.
-11. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction.
-12. **Benchmark comparison** (PSMo / AffordMotion) + generation FID. **Check how they define
-    non-collision before quoting anything** — given RESULTS §8, theirs cannot be the naive
+**-> YOU ARE HERE. Next: 11.**
+
+11. **INTERACTION IN A CHAIN.** Done-criteria 4 and 5 are NOT met: every chained rollout so
+    far is walk-only with goals on free floor, and §1 states a walk-only demo is a failure.
+    Also the larger unknown — sitting ends in a body pose nothing like mid-stride, and every
+    continuation result was measured on walking. Chain walk -> sit -> stand -> walk and check
+    the seams into and out of the interaction specifically, not just the average.
+    **Concrete change list in `docs/IN_FLIGHT.md`.**
+12. **Collision-guided decoding** (SWAPPABLE, see 2e). The only other thing gating a demo.
+    Measured target: beat the **1.09%** straight-line control — current models sit at
+    2.07-2.61%, i.e. worse than walking directly between waypoints. Rejection sampling over
+    chained rollouts is the guaranteed floor and is worth measuring first.
+13. **Qwen JSON** wired end-to-end -> ScanNet demo mp4 showing scene interaction. No longer
+    blocked: arbitrary goals now work (§10).
+14. **Benchmark comparison** (PSMo / AffordMotion) + generation FID. **Check how they define
+    non-collision before quoting anything** — given RESULTS §8 theirs cannot be the naive
     definition, and the definition decides comparability.
 
-Time-box step 9. If drift appears, get a watchable multi-segment mp4 first and measure after;
-another well-instrumented negative result is worth less right now than a demo that runs.
+Time-box 11 and 12. A watchable demo that meets criteria 4 and 5 is worth more right now than
+another well-instrumented negative result.
 
 ## 7. Done criteria
 1. ~~Baseline matches T2M-GPT paper~~ DONE for reconstruction; harness trusted.
