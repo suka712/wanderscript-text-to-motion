@@ -297,9 +297,17 @@ another well-instrumented negative result is worth less right now than a demo th
 3. ~~Single segment reaches an explicit goal from an explicit start pose~~ DONE at probe
    scale with the frozen tokenizer (2f). Re-confirm on the finetuned tokenizer after
    token re-extraction.
-4. Multi-segment instruction -> correct per-segment motion including interaction, with
-   continuous body pose across seams (no teleport).
-5. Watchable mp4 of scene interaction in a ScanNet room.
+4. Multi-segment instruction -> correct per-segment motion **including interaction**, with
+   continuous body pose across seams. **NOT MET.** Chaining works and seams are clean
+   (RESULTS §9), but every chained rollout so far is WALK-ONLY, with goals sampled on free
+   floor. Sit/lie inside a chain is untested. Per section 1, a walk-only demo is a failure.
+5. Watchable mp4 of **scene interaction** in a ScanNet room. **NOT MET**, same reason.
+
+   To meet 4 and 5: sample goals AT furniture (not free floor), give each segment
+   action-appropriate text, and chain e.g. walk -> sit -> stand -> walk. The tokenizer
+   handles sit/lie well as single segments (RESULTS §3) and continuation is validated, so
+   this may work as-is — but entering and leaving an interaction mid-chain has never been
+   run, and `demo_rollout.py` currently filters to `walk` clips.
 
 ## 8. Environment / logistics
 - Data: `/media/user/2tb/motion_data/` (HUMANISE, HumanML3D, ScanNet meshes). Data,
