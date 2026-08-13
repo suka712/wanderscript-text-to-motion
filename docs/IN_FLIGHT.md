@@ -3,7 +3,7 @@
 Volatile state that is NOT captured by RESULTS.md: what is running, where things live on the
 boxes, and the next concrete action. **Update or delete this file when its work lands.**
 
-Last updated: 2026-08-13, after step 10.
+Last updated: 2026-08-13, end of reporting cycle. Steps 1-10 done.
 
 ---
 
@@ -17,22 +17,43 @@ ssh train-3090 'pgrep -af "train_probe|demo_rollout|render_"; nvidia-smi --query
 command line contains "foo.py" so pgrep matches itself. Use `pgrep -f "[f]oo.py"` or poll a
 log sentinel (`grep -q '^saved ' log`).
 
-## Next action — collision-guided decoding (step 11)
+## Next action — INTERACTION IN A CHAIN. Do this before collision steering.
 
-**It is the only thing gating a demo.** Goal-following and chaining are both fixed; the model
-goes where it is told and chains cleanly, but it does not steer around furniture.
+**Done-criteria 4 and 5 are NOT met and this is why.** Every chained rollout so far is
+WALK-ONLY, with goals sampled on free floor. Both criteria require scene *interaction*, and
+CLAUDE.md §1 states a walk-only demo is a failure. Chaining itself works — the gap is that
+sit/lie inside a chain has never been run.
 
-Target, already measured: beat the **1.09%** straight-line control. Current models sit at
-2.07-2.61%, i.e. worse than walking directly between waypoints.
+It is also the **largest remaining unknown**. Sitting down ends in a body pose nothing like
+mid-stride, and every continuation result was measured on walking. If that pose transfer
+degrades, it is a training-data problem and costs a cycle. Cheap to find out.
+
+What to change in `scripts/chaining/demo_rollout.py`:
+1. It filters to `action == "walk"` — remove that.
+2. Goals come from free floor (`sample_waypoints`). For interaction, take the goal from the
+   clip's own target object instead: HUMANISE gives `object_id` / `object_label` per clip and
+   the world-frame track's endpoint is where the person actually interacts.
+3. Text is hardcoded `"walk to the target"`. Give each segment action-appropriate text —
+   the clip's own utterance for interaction segments.
+4. Chain something like walk -> sit -> stand -> walk and check the seams into and out of the
+   interaction specifically, not just the average.
+
+Then render with `render_chain_video.py` — a watchable sit-in-a-real-room clip is
+done-criterion 5.
+
+## After that — collision-guided decoding
+
+The only other thing gating a demo. Target already measured: beat the **1.09%** straight-line
+control (current models sit at 2.07-2.61%, i.e. worse than walking directly).
 
 Approach per CLAUDE.md 2e: at each AR step take top-k tokens, decode each candidate's root
 movement, check against the 0.9 m tall-obstacle map, re-rank to prefer non-colliding.
 **Rejection sampling over whole chained rollouts is the guaranteed floor** — generate N
-chains, keep the lowest-collision one — and is worth measuring first as a baseline.
+chains, keep the lowest-collision one — worth measuring first as a baseline.
 
-Build on `~/wander_data/step10/checkpoints/goalaug` (the goal-augmented model, best available).
-Measure with `scripts/chaining/demo_rollout.py --n-rollouts 30 --min-step 0.6 --max-step 1.2`,
-which prints the straight-line control alongside.
+Build on `~/wander_data/step10/checkpoints/goalaug`. Measure with
+`scripts/chaining/demo_rollout.py --n-rollouts 30 --min-step 0.6 --max-step 1.2`, which
+prints the straight-line control alongside.
 
 ## Ready to use
 
