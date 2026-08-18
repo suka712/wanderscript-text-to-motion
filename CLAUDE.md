@@ -40,6 +40,16 @@ interaction — sit, lie, reach-toward. Not navigation only.** A demo that only 
 is a failure. Body-level interaction (22-joint skeleton) is in scope; dexterous hand/finger
 manipulation is NOT in scope for V1.
 
+To illustrate the expected input and output of this pipeline:
+The pipeline is given a natural-language instruction, a 3D scene of the room, and the model's
+starting position. An example input: **"I just woke up, I need to grab a cup of coffee and sit
+down to start working."**
+
+Expected output: the model stands up from the bed, walks to the kitchen area, then walks to the
+desk and sits down. **The coffee itself is never picked up or carried** — "grab a cup of coffee"
+motivates the kitchen waypoint only, not a depicted action. An actual grasp would be dexterous
+hand/finger manipulation, already excluded from V1 above.
+
 Deliverables:
 - Explicit **start position** (x, y, yaw) as a direct user input.
 - Explicit **goal** per motion segment (spatial coordinate, not inferred from text).
