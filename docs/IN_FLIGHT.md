@@ -51,6 +51,16 @@ Done-criteria 4/5 are met, so the demo gate is cleared. Remaining build-order it
   directly onto `demo_interaction`'s (action, goal) segments — the action one-hot is exactly the
   MLLM's `action` field.
 
+## Open limitation — sit orientation (the model ignores which way furniture faces)
+
+The model sits without knowing the furniture's facing, so it can sit backwards. Diagnosed with
+`scripts/chaining/diag_sit_facing.py`: it FOLLOWS THE APPROACH DIRECTION (|sit facing − GT| 31°)
+and IGNORES a commanded sit facing (14° of 180° flip). Cause: no orientation signal anywhere —
+occupancy is a footprint. **Do NOT "fix" the demo by approaching from the GT seated direction —
+that is a hack (peeks at GT, doesn't touch the model, doesn't generalize), rejected on
+2026-08-20.** Proper fix = an orientation-aware scene rep the model consumes (RGB render /
+oriented-object map), or making it depend on an explicit orientation input. RESULTS §11.
+
 ## Heading (moonwalk) — FIXED at inference 2026-08-19 (RESULTS §11)
 
 The body did not turn to face travel (|facing−travel| 78°, "moonwalking" on free chains).

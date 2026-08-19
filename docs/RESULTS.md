@@ -554,6 +554,32 @@ their inherited facing so they do not spin in place. This is the lesson twice ov
 conditioning signal is redundant with what the model already predicts, it is ignored — reach
 for an inference-time geometric fix instead.
 
+### Open limitation — the model does not know which way the furniture faces (sit orientation)
+
+The model performs a sit without regard to the furniture's orientation, so it can sit facing the
+wrong way. `diag_sit_facing.py` (40 sit clips, `head_action`):
+- baseline |sit facing − GT seated facing| = **31°** — not random (90° would be), because the
+  sit FOLLOWS THE APPROACH DIRECTION (it sits ~31° off the way it walked in). In a real clip the
+  approach is correct, so the sit lands roughly right; with a synthesized approach it does not.
+- commanded sit facing is **IGNORED**: |gen(cmd=GT) − gen(cmd=GT+180°)| = **14°** (should be
+  ~180° if obeyed). Same as the walk heading — the `full_action_head` heading input is dead at
+  convergence, for sit too.
+
+**Root cause: there is no furniture-orientation signal anywhere the model sees.** The occupancy
+raster is a FOOTPRINT — a sofa's rectangle says nothing about which side is the seat vs the back.
+So the model cannot infer facing, and the one input that could carry it is ignored.
+
+**Rejected as a HACK (recorded so nobody ships it):** arranging the demo so the agent APPROACHES
+from the seed clip's GT seated direction makes the sit come out right (sit-facing error ~5°) —
+but that peeks at the ground-truth answer, does not touch the model, and does not generalize to a
+novel scene (no GT there). Do not do this and call it a result.
+
+**A proper fix is open work:** an orientation-aware scene representation the model actually
+consumes (the RGB render shows a chair's front; an oriented-object map from annotations would
+too), or forcing the model to depend on an explicit orientation input (the current heading input
+is treated as redundant and zeroed). Until then, wrong sit-orientation stands as a known
+limitation, honestly.
+
 ### In-distribution regression check (`eval_accumulation.py --by-action`, 300 clips)
 
 The fix is not free, and the cost is where you'd expect. Navigation is untouched: N=1 walk

@@ -65,7 +65,7 @@ HEAD_MIN_DISP = 0.4  # below this displacement, don't command a turn (e.g. sitti
 
 
 def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmean, cstd,
-               action=None):
+               action=None, head_target=None):
     ACT = ("full_action", "full_action_head")
     parts = [world_to_local_xy(goal_world, start_pose).ravel()]
     if cond_mode in ("rel_prefix", "full") + ACT:
@@ -80,13 +80,16 @@ def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmea
         onehot[ACTION_IDS[action]] = 1.0
         parts.append(onehot)
     if cond_mode == "full_action_head":
-        # command facing = direction of TRAVEL for a real move, else keep the current
-        # heading (delta 0) -- don't spin when sitting/standing in place. Expressed, like
-        # everything else, relative to the start heading.
+        # Target facing, relative to start. Priority: an explicit head_target (world yaw) --
+        # e.g. the correct SEATED orientation, which the goal position cannot supply; else
+        # command facing = direction of TRAVEL for a real move; else keep the current heading
+        # (don't spin sitting/standing in place).
         start_xy = np.asarray(start_pose[:2], float)
         d = np.asarray(goal_world, float) - start_xy
         start_yaw = float(np.arctan2(start_pose[2], start_pose[3]))
-        if np.linalg.norm(d) >= HEAD_MIN_DISP:
+        if head_target is not None:
+            delta = float(head_target) - start_yaw
+        elif np.linalg.norm(d) >= HEAD_MIN_DISP:
             delta = float(np.arctan2(d[1], d[0])) - start_yaw
         else:
             delta = 0.0
@@ -97,7 +100,7 @@ def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmea
 
 def rollout(trans, net, clip_model, clip_mod, mean, std, ns, texts, goals,
             start_pose, prefix_pose, occ=None, extent=None, max_seg=None, actions=None,
-            reorient=False):
+            reorient=False, head_targets=None):
     """Chain len(goals) segments. Returns list of per-segment dicts.
 
     actions: per-segment action name (walk/sit/stand up/lie), required when the model's
@@ -128,10 +131,11 @@ def rollout(trans, net, clip_model, clip_mod, mean, std, ns, texts, goals,
                 if np.linalg.norm(dvec) >= HEAD_MIN_DISP:
                     ry = float(np.arctan2(dvec[1], dvec[0]))
                     pose = pose.copy(); pose[2], pose[3] = np.sin(ry), np.cos(ry)
+            ht = head_targets[k] if head_targets is not None else None
             feat = clip_model.encode_text(
                 clip_mod.tokenize([txt], truncate=True).to(DEV)).float()
             extra = build_cond(ns["cond_mode"], np.asarray(goal, float), pose,
-                               prefix, occ, extent, cmean, cstd, action=act)
+                               prefix, occ, extent, cmean, cstd, action=act, head_target=ht)
             cond = torch.cat([feat, torch.from_numpy(extra).unsqueeze(0).to(DEV)], -1)
             tok = trans.sample(cond, if_categorial=False)
             if tok.numel() == 0:
