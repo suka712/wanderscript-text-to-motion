@@ -423,6 +423,147 @@ and is step 11's job.
 Candidate next moves if it needs to close further: raise `--goal-aug` above 0.5, or add an
 explicit distance-to-goal training objective rather than relying on token likelihood alone.
 
+## 11 · Interaction in a chain — DONE. Done-criteria 4 and 5 MET
+
+The goal of step 11 (done-criteria 4/5): a chained rollout that actually INTERACTS — walk to
+furniture, sit, stand, walk away — not a walk-only path. Reaching it required finding and
+fixing two obstacles that every prior metric had hidden, then a `full_action` retrain. The
+watchable `walk→sit→stand→walk` clips are at `~/wander_data/step11_demo_multiseg/` (best:
+`demo_00` scene0151/couch and `demo_05` scene0694/coffee-table, both 0% collision). Best model
+`~/wander_data/step11/checkpoints/action` — supersedes step-10 for interaction.
+
+### The measurement that unblocked it: pelvis height, not goal error
+
+Step 11a first reported sit/stand "work" by **goal error** — 0.14 m for sit vs a 0.18 m null.
+That is the §5#4 trap a sixth time: the goal is only (x, y), so **walking to the seated
+pelvis's xy scores well without ever sitting**. Goal error cannot see the z-axis, and sitting
+is a z-axis event. The composed demo made it visible — 0/3 (step-10) and 0/5 (step-8) chains
+sat, pelvis held at ~0.92 m through the "sit" segment while goal error stayed ~0.4 m.
+
+The diagnostic that replaces goal error here is **pelvis height**, oracle-verified through the
+identical 263→recover→Z-up path the decoder uses: GT sit drops 0.95→**0.52–0.58 m**, GT
+stand-up rises to **~0.98 m**, GT lie ends **~0.1 m**, GT walk holds **~0.95 m** throughout.
+The thresholds sit-z<0.70 / stand-z>0.80 separate seated from standing cleanly.
+
+### Obstacle 1 — goal augmentation (§10) suppresses interaction
+
+Single-segment generation from the clip's real (standstill) prefix, measured by pelvis height,
+60 clips/action whose GROUND TRUTH interacts:
+
+| model | sit rate | stand rate |
+|---|---|---|
+| step-8 (no goal-aug) | **75%** | 62% |
+| step-10 (+ goal-aug 0.5) | **42%** | 77% |
+
+Goal augmentation trains pure xy-reaching, and that taught the model to walk-to-the-xy-and-stay-standing
+instead of sitting: sit 75%→42%. (Stand-up "improving" is the same standing bias passing
+trivially.) **Goal error was identical across the two (0.16 vs 0.18 m)** — the proof it is blind.
+
+### Obstacle 2 — the walk→sit SEAM is out of distribution
+
+HUMANISE sit clips barely move (median start→sit **0.11 m**, p90 0.50 m, 0% ≥1.0 m) — the
+person is already at the furniture and starts from a **standstill**. So there are **no walk→sit
+transitions in the data**, and the seam a chain needs (a mid-stride walking body → sit down) was
+never trained. Isolated cleanly (step-8, sit clips, only the prefix varied):
+
+| prefix handed to the sit segment | sit rate |
+|---|---|
+| standing-still (own frame-0, in-distribution) | **70%** |
+| mid-stride walking (OOD) | **0%** |
+
+A walking prefix collapses sitting to zero — the model just keeps walking. This, not the model's
+inability to sit, is why every composed walk→sit chain failed.
+
+### The fix — explicit action + a synthesized walk→sit seam (training-time only)
+
+Three changes in `train_probe.py`, no re-tokenization (step-10 tokens already carry `action`,
+`prefix_pose`, `occ_crop`):
+1. **`cond_mode=full_action`** — a 4-way action one-hot (walk/sit/stand up/lie) appended raw to
+   the cond vector (1364→1368). The explicit "sit now" signal the (x,y) goal cannot carry.
+2. **`--walk-prefix-aug 0.5`** — for interaction clips, swap in a real mid-stride walking prefix
+   (from walk clips' own seam poses) half the time. Synthesizes the missing walk→sit seam:
+   *walking body + action=sit → sit tokens*.
+3. **`--goal-aug` restricted to WALK clips** — truncation no longer corrupts interaction goals.
+
+### Result — final `full_action` model (20k iters), pelvis-height, 60 clips/action
+
+| prefix | sit rate | stand rate | goal-err |
+|---|---|---|---|
+| own (standstill) | **83%** | 98% | 0.12 m |
+| **walk (was 0%)** | **85%** | 98% | 0.15 m |
+| step-10 goalaug (own, for reference) | 42% | 77% | 0.16 m |
+
+Walking-prefix sit **0%→85%** (obstacle 2 solved), standstill sit 42%→**83%** (obstacle 1
+solved), stand-up 77%→98%, and goal error did not regress (0.12 vs 0.16 m — it improved). The
+one-hot action is the load-bearing addition; the walk-prefix augmentation is what makes it fire
+from a walking body.
+
+### The composed demo — done-criteria 4 and 5
+
+`demo_interaction.py`, seeded from real sit clips (verified furniture + known sit target),
+`walk→sit→stand→walk` with explicit per-segment actions, pelvis-height SAT/STOOD structure
+check (no oracle exists for a composed chain — CLAUDE.md risk #4):
+
+| walk-up | chains SAT **and** STOOD |
+|---|---|
+| single long segment (start_dist 3 m) | 1 / 8 |
+| **multi-segment (auto-split hops, start_dist 3 m)** | **5 / 10** |
+
+**Why the walk-up had to be split.** A single 3 m walk segment UNDERSHOOTS — the model, trained
+on 0.63 m mean displacement, walks ~1.3 m and stops (RESULTS §9), leaving the sit segment a
+multi-metre goal. And a long sit goal makes the model WALK, not sit: HUMANISE sit clips barely
+move, so `action=sit` is entangled with a ~0.1–0.5 m goal, and a longer one is out of
+distribution. Splitting the walk-up into ≤1.1 m hops DELIVERS the body to the furniture, so the
+sit goal stays short and in distribution. Best chains are at 0% collision; the walk→sit and
+sit→stand seams run 300–440 mm (the body settling from a stride into a seat — expected, hidden
+by the display blend), while the walk-hop seams stay clean (28–92 mm, matching §7/§9).
+
+**Honest gap.** End-to-end composed SAT is ~50%, below the 85% single-segment capability — a
+composed chain compounds (deliver to furniture × fire the sit), and the sit segment's *generated*
+walk-end prefix differs from the mid-stride poses `--walk-prefix-aug` trained on. 50% is enough
+to harvest a watchable demo; closing it (end-of-walk prefixes in the augmentation, or a higher
+`--walk-prefix-aug`) is the next refinement if a higher yield is needed. **Single seed / one
+training run, as everywhere in this project.**
+
+### Heading — the body did not turn to face travel; fixed at inference (re-orient), NOT by conditioning
+
+`diag_heading.py`, 6-segment free-waypoint chains: the body held a nearly fixed facing
+(circular-std ~22° over a whole chain, ~28° turn within a segment) while travel spanned ±180°,
+so it reached side/behind goals by **strafing or walking backward** — |facing − travel| **78°**.
+
+**What was tried and FAILED — target-heading conditioning.** Added `cond_mode=full_action_head`:
+an explicit target heading (body yaw at the segment end, sin/cos relative to start),
+supervised on GT, commanded = direction-to-goal at inference. At 2k iters it helped (78°→56°),
+but the full 20k model **reverted to 76°** — it learned to IGNORE the heading input. Reason:
+GT people face their travel (median 8°, checked in `add_goal_heading.py`), so the target is
+**predictable from goal+prefix**; a converged 97%-accuracy model reproduces the GT tokens
+without needing the redundant input, and it gets no gradient. Using body-yaw instead of
+travel-direction did not escape the redundancy. Recorded so nobody re-adds it expecting a win.
+
+**Root cause is geometric, not a missing signal.** The body can only turn ~29° inside one short
+HUMANISE segment; free chains demand sharp (>29°) turns between segments, so facing lags travel.
+On smooth / GT-like paths the model already faces travel — the moonwalk is an artifact of
+sharp waypoint-to-waypoint direction changes.
+
+**What FIXED it — inference re-orient** (`rollout(..., reorient=True)`): rotate each walk
+segment's start heading to face its goal, so travel is "forward" every segment. |facing −
+travel| **78°→3°**, chain facing spread 22°→**87°** (it now turns to follow the path). It does
+NOT break the seam — the prefix pose is heading-canonicalized (frame-independent), so this only
+rotates the body about its root; limbs do not teleport. Interaction segments (short goal) keep
+their inherited facing so they do not spin in place. This is the lesson twice over: when a
+conditioning signal is redundant with what the model already predicts, it is ignored — reach
+for an inference-time geometric fix instead.
+
+### In-distribution regression check (`eval_accumulation.py --by-action`, 300 clips)
+
+The fix is not free, and the cost is where you'd expect. Navigation is untouched: N=1 walk
+drift 0.366 m and N=2 walk seam **60.7 mm** match step-10 (0.354 m, 59.1 mm), and interaction
+goal error *improved* (N=1 sit 0.108 vs 0.139, stand-up 0.182 vs 0.220). What rose is the
+**interaction seam** — N=2 sit 68.6→**92.5 mm**, stand-up 112→**154.7 mm** — because
+`--walk-prefix-aug` deliberately trains the interaction segment to produce its pose from a
+*walking* prefix, i.e. to snap rather than continue. That is the seam the display blend is for,
+and the trade bought the walk→sit seam existing at all.
+
 ---
 
 ## Conditioning inputs — evidence status
@@ -432,6 +573,7 @@ explicit distance-to-goal training objective rather than relying on token likeli
 | relative-frame goal | validated (§4, §5) |
 | seam pose | validated (§7) |
 | occupancy scene | representation validated (§6); on chained rollouts it beats its ablation on collision/goal/seam (§9), but **single seed per arm** — suggestive, not established. It does NOT produce obstacle avoidance: both models collide more than a straight line. |
+| action one-hot | validated on the final 20k model (§11): the explicit action signal that makes the model sit/stand rather than navigate to the xy. With `--walk-prefix-aug` it lifts walking-prefix sit 0%→85% and standstill sit 42%→83%. Single training run. |
 
 ## Bug ledger — five silent convention bugs, same shape each time
 
@@ -442,5 +584,8 @@ one inverted a track's conclusion.
 
 The pattern in the misses: each was checked with a metric structurally incapable of detecting
 it. Start-error cannot see a rotation; per-frame MPJPE cannot see cumulative drift; a collision
-rate cannot see that it is measuring the goal. **Every pipeline that emits a number gets an
-oracle control before any model number is read off it.**
+rate cannot see that it is measuring the goal; and (§11, the sixth instance) **goal error
+cannot see whether the person sat — the goal is (x, y) and sitting is a z-axis event, so a
+model that walks to the seat and stays standing scores as well as one that sits.** The fix each
+time is the same: **every pipeline that emits a number gets an oracle control, and the metric
+must be able to move when the thing you care about moves.**

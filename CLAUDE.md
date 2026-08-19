@@ -4,14 +4,18 @@ Authoritative project document. Read fully every session before acting. This is 
 ground truth for goals, architecture, what is validated, and where the project is likely
 to fail. Step specs are separate and disposable; this file is not.
 
-**Status 2026-08-13.** Steps 1-10 done. All three original research bets passed — goal
-grounding, conditional continuation, and chaining (which does not accumulate error). Goal
-following on *arbitrary* goals was broken and is now fixed (§10).
+**Status 2026-08-18.** Steps 1-11 done. All three original research bets passed — goal
+grounding, conditional continuation, and chaining. **Step 11 (interaction in a chain) is DONE:
+done-criteria 4 and 5 MET** — watchable walk→sit→stand→walk clips in real ScanNet rooms
+(`~/wander_data/step11_demo_multiseg/`). It was NOT free engineering: interaction was blocked
+by two obstacles both invisible to goal error (goal-aug suppressed sitting; the walk→sit seam
+is OOD in HUMANISE), fixed by an explicit action one-hot + a synthesized walk→sit seam
+(`cond_mode=full_action`, RESULTS §11). Best interaction model:
+`~/wander_data/step11/checkpoints/action`.
 
-**Next: step 11, interaction in a chain.** Every chained rollout so far is walk-only, so
-done-criteria 4 and 5 are NOT met and §1 calls a walk-only demo a failure. After that,
-obstacle avoidance — nothing in the system steers. No number here is comparable to published
-work yet.
+**Next: step 12, collision-guided decoding** — nothing in the system steers; chains collide
+~0-8% vs a 1.09% straight-line control. That is the last SWAPPABLE contribution. No number
+here is comparable to published work yet.
 
 *(This header goes stale faster than anything else in the file. Three stale "next step"
 pointers were found in one day. If it disagrees with `docs/IN_FLIGHT.md`, IN_FLIGHT wins —
@@ -119,6 +123,13 @@ Stage B — **Transformer finetune (conditional continuation).**
      pose of segment k-1). This is what makes chaining actually work — see 2d. This is a
      training-time change, not an inference trick; the model must LEARN to continue from an
      arbitrary ending pose.
+  3. **Explicit action conditioning (added step 11, LOAD-BEARING for interaction).** A 4-way
+     action one-hot (walk/sit/stand up/lie) concatenated to the cond vector (`cond_mode=
+     full_action`). WHY it is not optional: the goal is only (x, y), so nothing else tells the
+     model to SIT rather than walk to the seated xy — and at a walk→sit seam the walking prefix
+     otherwise wins and it keeps walking (measured 85%→0% sit without it). It is the exact
+     quantity the MLLM already emits (`action`), so it costs nothing at inference. Paired with
+     `--walk-prefix-aug`, which synthesizes the walk→sit seam HUMANISE lacks. RESULTS §11.
 - Scene conditioning also enters here, as an occupancy crop in the segment's own start
   frame (NOT DINOv2 features — see section 4 and RESULTS §6).
 - STRICT ORDERING: finetuning the VQ-VAE changes the codebook, which invalidates all
@@ -203,10 +214,12 @@ the five-entry bug ledger, and the gotchas that will bite again (VQ-VAE normaliz
 leaked 45.3mm baseline, `QuantizeEMAReset` not surviving `load_state_dict`, the 0.9m collision
 threshold). Do not re-derive or re-litigate any of it here.
 
-Not yet established, and worth stating plainly: **nothing has been chained**, **scene
-conditioning's contribution is unmeasured** (untestable on HUMANISE — only 0.8% of clips walk
->1.5m), and **generation FID is still unreproduced after 5 attempts**, so no number in this
-repo can be compared to published work.
+Not yet established, and worth stating plainly: **scene conditioning's contribution is
+unmeasured as obstacle avoidance** (chains still collide more than a straight line — step 12's
+job), **the composed-chain interaction yield is ~50% and single-seed** (RESULTS §11), and
+**generation FID is still unreproduced after 5 attempts**, so no number in this repo can be
+compared to published work. (Chaining itself — including interaction in a chain — IS done, §9
+and §11.)
 
 ---
 
@@ -214,8 +227,9 @@ repo can be compared to published work.
 LOAD-BEARING (changing these = re-deciding the project):
 - 22-joint HumanML3D representation with two-track (canonical + world-frame) storage.
 - VQ-VAE finetuned (not frozen), joint on HumanML3D + HUMANISE.
-- Transformer with explicit spatial conditioning (goal in the start frame — see 2a, 2f)
-  AND conditional continuation for chaining.
+- Transformer with explicit spatial conditioning (goal in the start frame — see 2a, 2f),
+  conditional continuation for chaining, AND explicit action conditioning (the action one-hot,
+  step 11 — see 2b.3). Interaction in a chain does not happen without the action input.
 - Strict training order: VQ-VAE -> re-extract tokens -> transformer.
 
 SWAPPABLE (change freely if evidence says so — surface it, don't agonize):
@@ -262,30 +276,34 @@ failure after building everything on top.
 8. ~~VQ-VAE joint finetune balance~~ RETIRED 2026-08-12 — Track 2 passed at 1:1 sampling,
    lr 2e-5, no forgetting.
 
-Meta: chaining and goal-following are both retired. **Obstacle avoidance is the only thing
-between here and a demo worth showing.** Everything else is engineering plus discipline about
-measurement (#4).
+Meta: chaining, goal-following, AND interaction-in-a-chain are all retired (step 11, RESULTS
+§11 — the interaction one was NOT free, it took an explicit action input + a synthesized
+walk→sit seam). **Obstacle avoidance is now the only thing between here and a demo worth
+showing that also steers.** Everything else is engineering plus discipline about measurement
+(#4) — which, in step 11, is exactly what caught the "sit" that was really a walk (goal error
+is z-blind; use pelvis height).
 
 ---
 
 ## 6. Build order
 
-**Done (1-10).** Numbers in `docs/RESULTS.md` §1-10: plumbing · baseline calibration
+**Done (1-11).** Numbers in `docs/RESULTS.md` §1-11: plumbing · baseline calibration
 (reconstruction only) · tokenizer finetune · grounding probe · token re-extraction · scene
-probe · continuation probe · combined transformer · chaining · goal augmentation.
+probe · continuation probe · combined transformer · chaining · goal augmentation ·
+interaction-in-a-chain.
 
 Steps 4/6/7 were **probes** — one conditioning input each, small budget, single seed. Step 8
-was the first model trained on all of it; step 10 is the current best,
-`~/wander_data/step10/checkpoints/goalaug`.
+was the first model trained on all of it; step 10 fixed arbitrary-goal navigation; step 11
+(`~/wander_data/step11/checkpoints/action`, `cond_mode=full_action`) is the current best and
+the first that INTERACTS in a chain.
 
-**-> YOU ARE HERE. Next: 11.**
+11. ~~**INTERACTION IN A CHAIN.**~~ DONE (RESULTS §11, done-criteria 4/5 met). Turned out to be
+    real research, not a demo script: goal augmentation had suppressed sitting and the walk→sit
+    seam was OOD (both hidden by goal error, which is z-blind). Fixed with an explicit action
+    one-hot + a synthesized walk→sit seam (`--walk-prefix-aug`) + walk-only goal-aug.
 
-11. **INTERACTION IN A CHAIN.** Done-criteria 4 and 5 are NOT met: every chained rollout so
-    far is walk-only with goals on free floor, and §1 states a walk-only demo is a failure.
-    Also the larger unknown — sitting ends in a body pose nothing like mid-stride, and every
-    continuation result was measured on walking. Chain walk -> sit -> stand -> walk and check
-    the seams into and out of the interaction specifically, not just the average.
-    **Concrete change list in `docs/IN_FLIGHT.md`.**
+**-> YOU ARE HERE. Next: 12.**
+
 12. **Collision-guided decoding** (SWAPPABLE, see 2e). The only other thing gating a demo.
     Measured target: beat the **1.09%** straight-line control — current models sit at
     2.07-2.61%, i.e. worse than walking directly between waypoints. Rejection sampling over
@@ -306,16 +324,20 @@ another well-instrumented negative result.
    scale with the frozen tokenizer (2f). Re-confirm on the finetuned tokenizer after
    token re-extraction.
 4. Multi-segment instruction -> correct per-segment motion **including interaction**, with
-   continuous body pose across seams. **NOT MET.** Chaining works and seams are clean
-   (RESULTS §9), but every chained rollout so far is WALK-ONLY, with goals sampled on free
-   floor. Sit/lie inside a chain is untested. Per section 1, a walk-only demo is a failure.
-5. Watchable mp4 of **scene interaction** in a ScanNet room. **NOT MET**, same reason.
+   continuous body pose across seams. **MET** (RESULTS §11). `demo_interaction.py` chains
+   walk→sit→stand→walk with explicit per-segment actions; 5/10 chains sit AND stand, verified
+   by pelvis height (goal error is z-blind to sitting — that blindness is what hid the whole
+   problem for a day). Interaction seams are larger than walk seams (92–155 mm vs 60) and the
+   display blend hides them.
+5. Watchable mp4 of **scene interaction** in a ScanNet room. **MET** —
+   `~/wander_data/step11_demo_multiseg/` (`demo_00` scene0151/couch, `demo_05`
+   scene0694/coffee-table, both 0% collision).
 
-   To meet 4 and 5: sample goals AT furniture (not free floor), give each segment
-   action-appropriate text, and chain e.g. walk -> sit -> stand -> walk. The tokenizer
-   handles sit/lie well as single segments (RESULTS §3) and continuation is validated, so
-   this may work as-is — but entering and leaving an interaction mid-chain has never been
-   run, and `demo_rollout.py` currently filters to `walk` clips.
+   It did NOT "work as-is" (an earlier draft of this line guessed it might). Two obstacles had
+   to be fixed first — goal-aug suppressing sitting and the OOD walk→sit seam — via an explicit
+   action input and `--walk-prefix-aug`. The lesson stands: sample goals AT furniture, give each
+   segment its action EXPLICITLY (not just via text — the action one-hot is load-bearing), and
+   deliver the body to the furniture with in-range walk hops before asking it to sit.
 
 ## 8. Environment / logistics
 - Data: `/media/user/2tb/motion_data/` (HUMANISE, HumanML3D, ScanNet meshes). Data,

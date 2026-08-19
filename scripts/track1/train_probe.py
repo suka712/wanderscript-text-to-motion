@@ -97,7 +97,25 @@ MOT_END_IDX = NB_CODE
 MOT_PAD_IDX = NB_CODE + 1
 
 COND_EXTRA_DIMS = {"abs": 6, "rel": 2, "rel_prefix": 2 + 66,
-                   "full": 2 + 66 + 28 * 28}
+                   "full": 2 + 66 + 28 * 28,
+                   # full + a 4-way one-hot action (walk/sit/stand up/lie). Step 11:
+                   # the goal is only (x, y), so nothing in "full" tells the model to
+                   # SIT rather than walk to the seated xy -- and a walking prefix at a
+                   # walk->sit seam makes it keep walking (measured 70%->0% sit). The
+                   # one-hot is the explicit action signal, fed raw into the same
+                   # cond_emb Linear as everything else (no new module).
+                   "full_action": 2 + 66 + 28 * 28 + 4,
+                   # full_action + a target HEADING (sin, cos of end_yaw - start_yaw).
+                   # Step 11 heading fix: the (x,y) goal says nothing about which way to
+                   # FACE, so the model translates without turning and free chains moonwalk
+                   # (RESULTS §11). Body facing is orientation info the goal lacks, so it is
+                   # a non-redundant signal the model must actually use. At inference we
+                   # command facing = direction of travel (see rollout.build_cond).
+                   "full_action_head": 2 + 66 + 28 * 28 + 4 + 2}
+
+# HUMANISE's 4-way action taxonomy, in the order build_flat_join/natsort yields.
+ACTION_IDS = {"walk": 0, "sit": 1, "stand up": 2, "lie": 3}
+INTERACTION_ACTIONS = frozenset({"sit", "stand up", "lie"})
 
 
 def cond_extra_raw(d, cond_mode):
@@ -125,6 +143,18 @@ def cond_extra_raw(d, cond_mode):
             d["prefix_pose"],
             d["occ_crop"],
         ]).astype(np.float32)
+    if cond_mode in ("full_action", "full_action_head"):
+        onehot = np.zeros(4, np.float32)
+        onehot[ACTION_IDS[d["action"]]] = 1.0
+        parts = [
+            world_to_local_xy(d["goal"], d["start"]),
+            d["prefix_pose"],
+            d["occ_crop"],
+            onehot,
+        ]
+        if cond_mode == "full_action_head":
+            parts.append(np.asarray(d["goal_heading"], np.float32))  # (sin, cos) rel to start
+        return np.concatenate(parts).astype(np.float32)
     raise ValueError(cond_mode)
 
 
@@ -137,6 +167,12 @@ def compute_cond_norm(manifest, cond_mode):
     if cond_mode == "abs":
         mean[2:4] = 0.0  # start sin, cos
         std[2:4] = 1.0
+    if cond_mode == "full_action":
+        mean[-4:] = 0.0  # keep the action one-hot as clean 0/1, not per-batch-scaled
+        std[-4:] = 1.0
+    if cond_mode == "full_action_head":
+        mean[-6:] = 0.0  # action one-hot (4) + heading sin/cos (2): all already unit-scale
+        std[-6:] = 1.0
     return mean, std
 
 
@@ -145,11 +181,26 @@ def cond_extra(d, cond_mode, mean, std):
 
 
 class ProbeMotionDataset(Dataset):
-    def __init__(self, manifest, cond_mode, cond_mean, cond_std, goal_aug=0.0, rng_seed=0):
+    def __init__(self, manifest, cond_mode, cond_mean, cond_std, goal_aug=0.0,
+                 walk_prefix_aug=0.0, rng_seed=0):
         self.data = manifest
         self.cond_mode = cond_mode
         self.cond_mean = cond_mean
         self.cond_std = cond_std
+        # walk_prefix_aug: probability, for an INTERACTION clip (sit/stand up/lie), of
+        # replacing its prefix_pose with a real mid-stride WALKING pose. Step 11 found
+        # the walk->sit seam is out of distribution -- HUMANISE interaction clips all
+        # start from standstill, so the model never saw "walking body -> sit" and, handed
+        # a walking prefix at a chain seam, just keeps walking (70%->0% sit, prefix
+        # isolated). This synthesises that missing seam: interaction target + walking
+        # prefix teaches the model to sit FROM a walk. The walking poses are the walk
+        # clips' own seam poses (mid-stride, on-manifold), so nothing off-manifold is fed.
+        self.walk_prefix_aug = walk_prefix_aug
+        self.walk_prefix_pool = None
+        if walk_prefix_aug > 0:
+            pool = [d["prefix_pose"] for d in manifest
+                    if d.get("action") == "walk" and "prefix_pose" in d]
+            self.walk_prefix_pool = np.stack(pool).astype(np.float32) if pool else None
         # goal_aug: probability of TRUNCATION augmentation. Cut the token
         # sequence at a random length L and make the goal the world position at
         # frame 4L-1, so the same clip supplies many (goal, motion) pairs at
@@ -166,7 +217,14 @@ class ProbeMotionDataset(Dataset):
 
     def __getitem__(self, i):
         d = self.data[i]
-        if self.goal_aug > 0 and "xy_traj" in d and self.rng.rand() < self.goal_aug:
+        # Goal (truncation) augmentation: WALK CLIPS ONLY. Step 11 found that
+        # truncating a sit/lie clip sets the goal to a mid-approach STANDING position
+        # while keeping a sit utterance -- teaching "sit-text + this goal = walk", which
+        # is exactly the interaction-suppression that dropped sit 75%->42%. Navigation
+        # (the reason goal-aug exists, RESULTS section 9/10) is a walk property, so
+        # restricting it to walk clips keeps that win without corrupting interaction.
+        if (self.goal_aug > 0 and d.get("action") == "walk" and "xy_traj" in d
+                and self.rng.rand() < self.goal_aug):
             n_tok = len(d["tokens"])
             traj = d["xy_traj"]
             if n_tok >= 3 and len(traj) >= 8:
@@ -175,6 +233,17 @@ class ProbeMotionDataset(Dataset):
                 d = dict(d)
                 d["tokens"] = d["tokens"][:L]
                 d["goal"] = traj[fi].astype(np.float32)
+                # truncate the heading target WITH the goal, so full_action_head sees the
+                # facing at the truncated endpoint, not the full segment's end facing.
+                if "head_traj" in d:
+                    ht = d["head_traj"]
+                    d["goal_heading"] = ht[min(fi, len(ht) - 1)].astype(np.float32)
+        # Walking-prefix augmentation for interaction clips (see __init__).
+        if (self.walk_prefix_pool is not None
+                and d.get("action") in INTERACTION_ACTIONS
+                and self.rng.rand() < self.walk_prefix_aug):
+            d = dict(d)
+            d["prefix_pose"] = self.walk_prefix_pool[self.rng.randint(len(self.walk_prefix_pool))]
         m_tokens = d["tokens"].astype(np.int64)
         m_tokens_len = m_tokens.shape[0]
         if m_tokens_len + 1 < MAX_MOTION_LENGTH:
@@ -219,16 +288,23 @@ def load_pretrained(trans_encoder, conditioned, cond_dim=0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--conditioned", action="store_true")
-    ap.add_argument("--cond-mode", choices=["rel", "abs", "rel_prefix", "full"], default="rel",
+    ap.add_argument("--cond-mode",
+                    choices=["rel", "abs", "rel_prefix", "full", "full_action", "full_action_head"],
+                    default="rel",
                     help="frame the goal is expressed in; see module docstring. "
-                         "Ignored when --conditioned is not set.")
+                         "full_action adds a 4-way action one-hot; full_action_head also adds a "
+                         "target heading (Step 11). Ignored when --conditioned is not set.")
     ap.add_argument("--iters", type=int, default=4000)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--print-iter", type=int, default=100)
     ap.add_argument("--goal-aug", type=float, default=0.0,
                     help="probability of truncation augmentation (see ProbeMotionDataset). "
-                         "0.5 is the first thing to try for the RESULTS section 9 problem.")
+                         "0.5 is the first thing to try for the RESULTS section 9 problem. "
+                         "Applied to WALK CLIPS ONLY as of Step 11.")
+    ap.add_argument("--walk-prefix-aug", type=float, default=0.0,
+                    help="probability, for interaction clips, of swapping in a walking prefix "
+                         "pose (Step 11 fix for the OOD walk->sit seam). 0.5 is the first try.")
     ap.add_argument("--save-every", type=int, default=0,
                     help="also write net_iter<N>.pth every N iters. Worth setting for long "
                          "runs -- a crash at iter 19000 of 20000 otherwise loses everything.")
@@ -251,7 +327,7 @@ def main():
     print(f"cond_mode={args.cond_mode} mean={cond_mean} std={cond_std}")
 
     dataset = ProbeMotionDataset(train_manifest, args.cond_mode, cond_mean, cond_std,
-                                 goal_aug=args.goal_aug)
+                                 goal_aug=args.goal_aug, walk_prefix_aug=args.walk_prefix_aug)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
 
     def cycle(it):
@@ -329,7 +405,7 @@ def main():
         json.dump({"cond_mean": cond_mean.tolist(), "cond_std": cond_std.tolist(),
                    "cond_mode": args.cond_mode, "conditioned": args.conditioned,
                    "clip_dim": clip_dim, "tokens_dir": args.tokens_dir,
-                   "goal_aug": args.goal_aug}, f)
+                   "goal_aug": args.goal_aug, "walk_prefix_aug": args.walk_prefix_aug}, f)
     print(f"saved {ckpt_path}")
 
 

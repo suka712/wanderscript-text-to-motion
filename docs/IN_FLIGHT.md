@@ -3,43 +3,100 @@
 Volatile state that is NOT captured by RESULTS.md: what is running, where things live on the
 boxes, and the next concrete action. **Update or delete this file when its work lands.**
 
-Last updated: 2026-08-13, end of reporting cycle. Steps 1-10 done.
+Last updated: 2026-08-18. Steps 1-11 done. **Step 11 (interaction in a chain) is DONE —
+done-criteria 4 and 5 MET.** Watchable walk→sit→stand→walk clips at
+`~/wander_data/step11_demo_multiseg/` (best: `demo_00` scene0151/couch, `demo_05`
+scene0694/coffee-table, both 0% collision). Best interaction model:
+`~/wander_data/step11/checkpoints/action`.
 
 ---
 
-## Nothing is running.
+## Nothing is training right now. (An eval may be running — check.)
 
 ```
-ssh train-3090 'pgrep -af "train_probe|demo_rollout|render_"; nvidia-smi --query-gpu=memory.used --format=csv,noheader'
+ssh train-3090 'pgrep -af "[t]rain_probe.py|[d]emo_interaction|[e]val_"; nvidia-smi --query-gpu=memory.used --format=csv,noheader'
 ```
 
 **Wait-loop gotcha.** `while pgrep -f foo.py; do sleep 60; done` never exits — the loop's own
 command line contains "foo.py" so pgrep matches itself. Use `pgrep -f "[f]oo.py"` or poll a
 log sentinel (`grep -q '^saved ' log`).
 
-## Next action — INTERACTION IN A CHAIN. Do this before collision steering.
+## Step-11 result, reproduce commands
 
-**Done-criteria 4 and 5 are NOT met and this is why.** Every chained rollout so far is
-WALK-ONLY, with goals sampled on free floor. Both criteria require scene *interaction*, and
-CLAUDE.md §1 states a walk-only demo is a failure. Chaining itself works — the gap is that
-sit/lie inside a chain has never been run.
+Best model `~/wander_data/step11/checkpoints/action` (`cond_mode=full_action`, goal-aug 0.5
+walk-only, walk-prefix-aug 0.5). Recipe:
+`WANDER_TRACK1_PROBE_ROOT=~/wander_data/step11 train_probe.py --conditioned --cond-mode
+full_action --iters 20000 --lr 1e-4 --goal-aug 0.5 --walk-prefix-aug 0.5 --tokens-dir
+~/wander_data/step10/tokens --out-name action`.
 
-It is also the **largest remaining unknown**. Sitting down ends in a body pose nothing like
-mid-stride, and every continuation result was measured on walking. If that pose transfer
-degrades, it is a training-data problem and costs a cycle. Cheap to find out.
+- Capability (pelvis height, NOT goal error which is z-blind): `eval_sit_capability.py --ckpts
+  ~/wander_data/step11/checkpoints/action --vqvae-ckpt <ft-vqvae> --n 60 --actions sit "stand up"
+  --prefix-mode walk` → sit **85%** (was 0%); `--prefix-mode own` → **83%** (was 42%).
+- Demo: `demo_interaction.py --ckpt ~/wander_data/step11/checkpoints/action --vqvae-ckpt
+  <ft-vqvae> --out <dir> --seed-action sit --n-demos 10 --start-dist 3.0 --front 0.3` →
+  **5/10** chains SAT and STOOD. The walk-up AUTO-SPLITS into ≤1.1 m hops (a single 3 m walk
+  undershoots and leaves the sit goal too long → the model walks instead of sitting).
+  `--seed-action lie` for a lie demo (untried — worth a run).
 
-What to change in `scripts/chaining/demo_rollout.py`:
-1. It filters to `action == "walk"` — remove that.
-2. Goals come from free floor (`sample_waypoints`). For interaction, take the goal from the
-   clip's own target object instead: HUMANISE gives `object_id` / `object_label` per clip and
-   the world-frame track's endpoint is where the person actually interacts.
-3. Text is hardcoded `"walk to the target"`. Give each segment action-appropriate text —
-   the clip's own utterance for interaction segments.
-4. Chain something like walk -> sit -> stand -> walk and check the seams into and out of the
-   interaction specifically, not just the average.
+## Next: step 12 (collision-guided decoding) or demo polish
 
-Then render with `render_chain_video.py` — a watchable sit-in-a-real-room clip is
-done-criterion 5.
+Done-criteria 4/5 are met, so the demo gate is cleared. Remaining build-order items:
+- **Step 12 — collision-guided decoding** (the last SWAPPABLE contribution). Target: beat the
+  **1.09%** straight-line control; the `full_action` chains sit at ~0–8% collision (some scenes
+  worse, e.g. 24% once). Rejection sampling over chained rollouts is the guaranteed floor.
+- **Demo polish** (optional): close the composed SAT gap (50% → higher) with end-of-walk
+  prefixes in `--walk-prefix-aug` (currently mid-stride only) or a higher aug probability; a
+  `lie` demo; nicer camera. See RESULTS §11 "honest gap".
+- **Step 13 — Qwen JSON** end-to-end now emits `{action, goal_coord}` per segment, which maps
+  directly onto `demo_interaction`'s (action, goal) segments — the action one-hot is exactly the
+  MLLM's `action` field.
+
+## Heading (moonwalk) — FIXED at inference 2026-08-19 (RESULTS §11)
+
+The body did not turn to face travel (|facing−travel| 78°, "moonwalking" on free chains).
+- Target-heading CONDITIONING (`cond_mode=full_action_head`, model `step11/checkpoints/head_action`)
+  was tried and FAILED: helped at 2k (56°) but the converged 20k model ignored it (76°) — the
+  heading target is redundant with goal+prefix on GT, so it gets no gradient. Don't re-add it.
+- The INFERENCE re-orient fixes it: `rollout(..., reorient=True)` (exposed as `--reorient` on
+  `demo_interaction.py` and `diag_heading.py`) rotates each walk segment's start to face its
+  goal. |facing−travel| 78°→**3°**, keeps clean seams (prefix is heading-canonicalized).
+  Reoriented demo: `~/wander_data/step11_demo_reorient/`.
+- `head_action` and the earlier `action` model behave the same on heading (conditioning ignored);
+  use either with `--reorient`. Diagnose with `scripts/chaining/diag_heading.py [--reorient]`.
+
+## The finding, in one paragraph (so a cold reader gets it)
+
+Done-criteria 4/5 were blocked by TWO things, both invisible to goal error (which is (x,y)-only
+and cannot see sitting, a z event — RESULTS §11): (1) goal augmentation (§10) trained pure
+xy-reaching and suppressed sitting 75%→42%; (2) the walk→sit seam is out-of-distribution —
+HUMANISE sit clips start from a standstill, so a mid-stride walking prefix drops sit 70%→0% and
+the model just keeps walking. Fix (training-time only, no re-tokenize): `cond_mode=full_action`
+(a 4-way action one-hot as an explicit "sit now" signal) + `--walk-prefix-aug` (swap a walking
+prefix onto interaction clips to synthesize the missing seam) + `--goal-aug` restricted to walk
+clips. Validated at 2k iters: walking-prefix sit 0%→85%.
+
+## New/changed artifacts this cycle
+
+- `scripts/chaining/demo_interaction.py` — composed walk→sit→stand→walk demo, pelvis-z SAT/STOOD
+  structure check (no oracle exists for a composed chain, so structure is the check). Has
+  `--start-dist` (synthesize a far chain start so the walk-up is real) and an AUTO-SPLIT walk-up
+  into ≤1.1 m hops so the body is delivered to the furniture before the sit.
+- `scripts/chaining/eval_sit_capability.py` — single-segment sit/stand by pelvis height, with
+  `--prefix-mode {own,walk}` (the prefix-isolation control) and multi-ckpt compare.
+- `scripts/chaining/eval_accumulation.py` — additive `--by-action` flag (default output unchanged);
+  now loads BEV for `full_action`/`full_action_head` too.
+- `scripts/chaining/diag_heading.py` — measures body-facing vs travel direction (the moonwalk
+  diagnostic); `--reorient` to test the inference heading fix.
+- `scripts/track1/add_goal_heading.py` — adds the target-heading field to a token manifest
+  (geometry only, no re-tokenize); produced `~/wander_data/step11/tokens_head`.
+- `scripts/track1/train_probe.py` — `cond_mode=full_action` and `full_action_head`,
+  `--walk-prefix-aug`, goal-aug now walk-only. `scripts/chaining/rollout.py` —
+  `rollout(..., actions=[...], reorient=...)`, `build_cond` action + heading args.
+- Best models: `~/wander_data/step11/checkpoints/head_action` (latest; action+heading, use with
+  `--reorient`) and `.../action` (action only) — the two behave the same on heading since the
+  heading CONDITIONING is ignored at convergence (RESULTS §11). `step10/checkpoints/goalaug`
+  remains best for pure navigation but sits only 42%.
+  `step10/checkpoints/goalaug` remains best for pure navigation but sits only 42%.
 
 ## After that — collision-guided decoding
 

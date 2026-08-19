@@ -70,6 +70,13 @@ def main():
     ap.add_argument("--n-clips", type=int, default=150)
     ap.add_argument("--chain-lengths", type=int, nargs="+", default=[1, 2, 3, 4, 6])
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--by-action", action="store_true",
+                    help="additionally print a per-action breakdown (walk/sit/stand up/lie). "
+                         "Purely additive -- the default aggregate table is unchanged. Step 11: "
+                         "the aggregate hides interaction seams inside a walk-dominated average; "
+                         "this surfaces them, and the N=1 stand-up row tests the hardest case "
+                         "(a fully-seated start prefix -> a full stand-up, which the midpoint-cut "
+                         "continuation training never saw as a generation target).")
     args = ap.parse_args()
 
     test = pickle.load(open(os.path.join(args.tokens_dir, "test.pkl"), "rb"))
@@ -85,6 +92,7 @@ def main():
 
     scenes = {}
     out = {n: {"drift": [], "seam": [], "goal": [], "oracle": [], "null": []} for n in args.chain_lengths}
+    by_action = {n: {} for n in args.chain_lengths} if args.by_action else None
     used = 0
     for i in picks:
         if used >= args.n_clips:
@@ -94,7 +102,7 @@ def main():
         cm = np.load(os.path.join(HUMANISE, "contact_motion", "motions", f"{d['index']:05d}.npy"))
         jw, xy, _, sincos = compute_track2(rec)
         occ = extent = None
-        if ns["cond_mode"] == "full":
+        if ns["cond_mode"] in ("full", "full_action", "full_action_head"):
             f = os.path.join(BEV, f"{rec.scene}.npz")
             if not os.path.exists(f):
                 continue
@@ -127,16 +135,30 @@ def main():
             start_pose = np.array([xy[0, 0], xy[0, 1], sincos[0, 0], sincos[0, 1]], np.float32)
             prefix = mf.local_joint_positions(d0.astype(np.float32))[0].ravel()
 
+            acts = [rec.action] * len(goals) if ns["cond_mode"] in ("full_action", "full_action_head") else None
             segs = rollout(trans, net, cmodel, clip, mean, std, ns, texts, goals,
-                           start_pose, prefix, occ, extent)
+                           start_pose, prefix, occ, extent, actions=acts)
             if len(segs) != len(goals):
                 continue
             gt_end = xy[min(cuts[-1][1] - 1, xy.shape[0] - 1)]
-            out[n]["drift"].append(float(np.linalg.norm(segs[-1]["world"][-1, 0, :2] - gt_end)))
-            out[n]["goal"].append(float(np.mean([s["goal_err"] for s in segs])))
-            if n > 1:
-                out[n]["seam"].append(float(np.mean([s["seam_err"] for s in segs[1:]])))
-            out[n]["null"].append(float(np.linalg.norm(xy[0] - gt_end)))
+            drift_v = float(np.linalg.norm(segs[-1]["world"][-1, 0, :2] - gt_end))
+            goal_v = float(np.mean([s["goal_err"] for s in segs]))
+            null_v = float(np.linalg.norm(xy[0] - gt_end))
+            seam_v = float(np.mean([s["seam_err"] for s in segs[1:]])) if n > 1 else None
+            out[n]["drift"].append(drift_v)
+            out[n]["goal"].append(goal_v)
+            if seam_v is not None:
+                out[n]["seam"].append(seam_v)
+            out[n]["null"].append(null_v)
+            ba = (by_action[n].setdefault(rec.action,
+                    {"drift": [], "seam": [], "goal": [], "oracle": [], "null": []})
+                  if by_action is not None else None)
+            if ba is not None:
+                ba["drift"].append(drift_v)
+                ba["goal"].append(goal_v)
+                ba["null"].append(null_v)
+                if seam_v is not None:
+                    ba["seam"].append(seam_v)
 
             # oracle: same cuts, ground-truth tokens, identical placement path
             pose = start_pose.copy()
@@ -159,7 +181,10 @@ def main():
                     pose = np.array([w[-1, 0, 0], w[-1, 0, 1], np.sin(yaw), np.cos(yaw)], np.float32)
                     last = w
             if last is not None:
-                out[n]["oracle"].append(float(np.linalg.norm(last[-1, 0, :2] - gt_end)))
+                oracle_v = float(np.linalg.norm(last[-1, 0, :2] - gt_end))
+                out[n]["oracle"].append(oracle_v)
+                if ba is not None:
+                    ba["oracle"].append(oracle_v)
             ok = True
         if ok:
             used += 1
@@ -179,6 +204,26 @@ def main():
     print("\nfinal drift = |chain end - ground-truth end|. Compare against ORACLE (same cuts,\n"
           "GT tokens, same placement path) -- drift at the oracle level is the tokenizer, not\n"
           "chaining. NULL is the clip's total displacement, i.e. the do-nothing score.")
+
+    if by_action is not None:
+        print("\n=== per-action breakdown (Step 11) ===")
+        print("N=1 drift/goal test each action's single-segment generation from its OWN true\n"
+              "start prefix -- for 'stand up' that prefix is a FULLY-SEATED frame 0, the hardest\n"
+              "case. Read drift/goal against that action's ORACLE, never against walk's.")
+        for n in args.chain_lengths:
+            actions = by_action[n]
+            if not any(v["drift"] for v in actions.values()):
+                continue
+            print(f"\nN={n}")
+            print(f"{'action':<10}{'drift':>11}{'oracle':>11}{'null':>9}{'seam':>10}{'goal':>9}{'n':>6}")
+            for a in ["walk", "sit", "stand up", "lie"]:
+                r = actions.get(a)
+                if not r or not r["drift"]:
+                    continue
+                seam = f"{np.mean(r['seam'])*1000:>9.1f}" if r["seam"] else f"{'-':>9}"
+                orc = f"{np.mean(r['oracle']):>10.3f}" if r["oracle"] else f"{'-':>10}"
+                print(f"{a:<10}{np.mean(r['drift']):>10.3f}m{orc}m{np.mean(r['null']):>8.3f}m"
+                      f"{seam}mm{np.mean(r['goal']):>8.3f}m{len(r['drift']):>6}")
 
 
 if __name__ == "__main__":

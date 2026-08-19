@@ -38,7 +38,7 @@ for p in ["src", "scripts/track1", "scripts/scene_probe"]:
 import motion_features as mf  # noqa: E402
 from humanise_join import J_LHIP, J_RHIP, J_LSHOULDER, J_RSHOULDER  # noqa: E402
 from se2_utils import se2_place_full_body, world_to_local_xy  # noqa: E402
-from train_probe import build_transformer, COND_EXTRA_DIMS  # noqa: E402
+from train_probe import build_transformer, COND_EXTRA_DIMS, ACTION_IDS  # noqa: E402
 
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 OCC_N = 28
@@ -61,20 +61,58 @@ def occ_crop(occ, extent, xy, yaw):
     return c.reshape(OCC_N, k, OCC_N, k).mean((1, 3)).ravel().astype(np.float32)
 
 
-def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmean, cstd):
+HEAD_MIN_DISP = 0.4  # below this displacement, don't command a turn (e.g. sitting in place)
+
+
+def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmean, cstd,
+               action=None):
+    ACT = ("full_action", "full_action_head")
     parts = [world_to_local_xy(goal_world, start_pose).ravel()]
-    if cond_mode in ("rel_prefix", "full"):
+    if cond_mode in ("rel_prefix", "full") + ACT:
         parts.append(prefix_pose)
-    if cond_mode == "full":
+    if cond_mode in ("full",) + ACT:
         yaw = float(np.arctan2(start_pose[2], start_pose[3]))
         parts.append(occ_crop(occ, extent, start_pose[:2], yaw))
+    if cond_mode in ACT:
+        if action is None:
+            raise ValueError(f"cond_mode {cond_mode} needs an action per segment")
+        onehot = np.zeros(4, np.float32)
+        onehot[ACTION_IDS[action]] = 1.0
+        parts.append(onehot)
+    if cond_mode == "full_action_head":
+        # command facing = direction of TRAVEL for a real move, else keep the current
+        # heading (delta 0) -- don't spin when sitting/standing in place. Expressed, like
+        # everything else, relative to the start heading.
+        start_xy = np.asarray(start_pose[:2], float)
+        d = np.asarray(goal_world, float) - start_xy
+        start_yaw = float(np.arctan2(start_pose[2], start_pose[3]))
+        if np.linalg.norm(d) >= HEAD_MIN_DISP:
+            delta = float(np.arctan2(d[1], d[0])) - start_yaw
+        else:
+            delta = 0.0
+        parts.append(np.array([np.sin(delta), np.cos(delta)], np.float32))
     raw = np.concatenate(parts).astype(np.float32)
     return ((raw - cmean) / cstd).astype(np.float32)
 
 
 def rollout(trans, net, clip_model, clip_mod, mean, std, ns, texts, goals,
-            start_pose, prefix_pose, occ=None, extent=None, max_seg=None):
-    """Chain len(goals) segments. Returns list of per-segment dicts."""
+            start_pose, prefix_pose, occ=None, extent=None, max_seg=None, actions=None,
+            reorient=False):
+    """Chain len(goals) segments. Returns list of per-segment dicts.
+
+    actions: per-segment action name (walk/sit/stand up/lie), required when the model's
+    cond_mode is full_action (Step 11) and ignored otherwise. Lets the caller command the
+    action explicitly rather than leaving it to text -- the fix for the model treating
+    every segment as navigation.
+
+    reorient: if True, rotate each segment's START heading to face its goal before
+    generating (walk-scale moves only). The model can only turn ~29 deg inside one short
+    HUMANISE segment, so on free chains with sharp waypoint-to-waypoint turns the body
+    lags its travel and "moonwalks" (RESULTS §11 heading limitation). Re-orienting makes
+    travel "forward" every segment so the body faces where it walks. It does NOT break the
+    seam: the prefix pose is heading-canonicalized (frame-independent), so this only rotates
+    the body about its root, it does not teleport limbs. Interaction segments (short goal)
+    keep their inherited facing so they don't spin in place."""
     cmean = np.array(ns["cond_mean"], np.float32)
     cstd = np.array(ns["cond_std"], np.float32)
     pose = np.asarray(start_pose, dtype=np.float32).copy()
@@ -84,10 +122,16 @@ def rollout(trans, net, clip_model, clip_mod, mean, std, ns, texts, goals,
         for k, (txt, goal) in enumerate(zip(texts, goals)):
             if max_seg and k >= max_seg:
                 break
+            act = actions[k] if actions is not None else None
+            if reorient:
+                dvec = np.asarray(goal, float) - pose[:2]
+                if np.linalg.norm(dvec) >= HEAD_MIN_DISP:
+                    ry = float(np.arctan2(dvec[1], dvec[0]))
+                    pose = pose.copy(); pose[2], pose[3] = np.sin(ry), np.cos(ry)
             feat = clip_model.encode_text(
                 clip_mod.tokenize([txt], truncate=True).to(DEV)).float()
             extra = build_cond(ns["cond_mode"], np.asarray(goal, float), pose,
-                               prefix, occ, extent, cmean, cstd)
+                               prefix, occ, extent, cmean, cstd, action=act)
             cond = torch.cat([feat, torch.from_numpy(extra).unsqueeze(0).to(DEV)], -1)
             tok = trans.sample(cond, if_categorial=False)
             if tok.numel() == 0:
@@ -103,6 +147,7 @@ def rollout(trans, net, clip_model, clip_mod, mean, std, ns, texts, goals,
                 "seam_err": float(np.linalg.norm(local[0] - prefix.reshape(22, 3), axis=-1).mean()),
                 "goal_err": float(np.linalg.norm(world[-1, 0, :2] - np.asarray(goal, float))),
                 "text": txt,
+                "action": act,
             })
             # hand off: DECODED ending pose, and heading from the generated body
             end_xy = world[-1, 0, :2]
