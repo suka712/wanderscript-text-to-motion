@@ -580,6 +580,13 @@ too), or forcing the model to depend on an explicit orientation input (the curre
 is treated as redundant and zeroed). Until then, wrong sit-orientation stands as a known
 limitation, honestly.
 
+**Where SOTA is (SceMoS, CVPR 2026):** even the SOTA does NOT explicitly control interaction
+orientation — it emerges from the planned approach, same as us. What it DOES have is a
+geometry-grounded TOKENIZER (local heightmap → VQ-VAE decoder + contact loss) giving
+contact-correct interaction, which we lack (our tokenizer is scene-blind, scene is a
+transformer-side footprint). So the near-term orientation answer is placement-side perception;
+the deeper interaction upgrade is a heightmap tokenizer. See docs/IN_FLIGHT.md "Next direction".
+
 ### In-distribution regression check (`eval_accumulation.py --by-action`, 300 clips)
 
 The fix is not free, and the cost is where you'd expect. Navigation is untouched: N=1 walk

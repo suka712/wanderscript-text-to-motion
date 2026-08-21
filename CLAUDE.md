@@ -361,5 +361,10 @@ another well-instrumented negative result.
     directories, and expect plain `git clone` of a big repo to be slow. This repo is tiny,
     so `git pull`/`push` is unaffected.
 - Benchmarks: PSMo + AffordMotion (reported HUMANISE numbers; PSMo has no public code, so
-  state test-protocol differences honestly). SceMoS is related work only — it reports on
-  TRUMANS, a different dataset; no numeric comparison.
+  state test-protocol differences honestly). SceMoS (CVPR 2026, arXiv 2602.20476) is related
+  work only — it reports on TRUMANS, a different dataset; no numeric comparison. **But its
+  architecture is the pointed lesson for our scene-awareness gap:** it grounds the *tokenizer*
+  in a local scene heightmap (VQ-VAE decoder takes `(token, heightmap)`; ±0.6 m body-frame,
+  32×32, contact-indicator loss), so decoded motion is contact-correct. Ours puts scene only on
+  the *transformer* as an occupancy footprint — height/orientation blind — which is why the
+  model is scene-grounded but not contact/geometry-aware. See docs/IN_FLIGHT.md "Next direction".

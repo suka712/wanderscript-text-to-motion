@@ -51,6 +51,25 @@ Done-criteria 4/5 are met, so the demo gate is cleared. Remaining build-order it
   directly onto `demo_interaction`'s (action, goal) segments — the action one-hot is exactly the
   MLLM's `action` field.
 
+## Next direction (when fresh) — geometry-grounded tokenizer, from SceMoS
+
+The genuine "make the MODEL scene-aware for interaction" upgrade, learned from SceMoS (CVPR 2026,
+arXiv 2602.20476, TRUMANS): put scene geometry in the **TOKENIZER**, not just the transformer.
+- SceMoS's VQ-VAE decoder takes `(token, local heightmap)` — heightmap ±0.6 m in the body frame,
+  32×32, recomputed each step, plain concatenation (beat FiLM/cross-attn), with a foot-contact
+  reconstruction loss. Result: contact-correct motion (Contact 0.98, low penetration).
+- Ours: tokenizer is scene-BLIND (decodes a canonical clip, SE(2)-placed); scene is only a
+  transformer-side occupancy FOOTPRINT (height/orientation blind). That is why our interactions
+  can't be contact-correct and the occupancy signal is weakly used.
+- Sketch of the port: retrain the VQ-VAE with a local heightmap input to the decoder + a contact
+  loss. **Open blocker to check first: does HUMANISE give us per-frame surface geometry to build
+  the heightmaps?** (We have the scene mesh + the world-frame track, so a local heightmap under
+  the root is computable — verify resolution/extent are enough. `probe_furniture_orientation.py`
+  already pulls local scene geometry per clip; reuse that plumbing.)
+- Orientation SELECTION stays separate and open even at SOTA — SceMoS leans on the planned
+  approach for it, same as us. So the placement-side "perceive orientation → set the approach/
+  placement yaw" remains the near-term answer; the heightmap tokenizer fixes CONTACT, not facing.
+
 ## Open limitation — sit orientation (the model ignores which way furniture faces)
 
 The model sits without knowing the furniture's facing, so it can sit backwards. Diagnosed with
