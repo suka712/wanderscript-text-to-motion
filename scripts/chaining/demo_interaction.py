@@ -45,7 +45,7 @@ import numpy as np
 import torch
 
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
-for p in ["src", "scripts/track1", "scripts/chaining"]:
+for p in ["src", "scripts/track1", "scripts/chaining", "scripts/planner"]:
     sys.path.insert(0, os.path.join(REPO_ROOT, p))
 
 import motion_features as mf  # noqa: E402
@@ -76,7 +76,7 @@ MAX_HOP = 1.1  # per-segment walk range; the model, trained on 0.63 m mean displ
                # covers ~1.3 m before stopping (RESULTS section 9). Longer goals undershoot.
 
 
-def compose_goals_texts(start_xy, sit_xy, occ, extent, rng, front=0.3, stand=0.5, away=1.3):
+def compose_goals_texts(start_xy, sit_xy, occ, extent, rng, front=0.3, stand=0.5, away=1.3, tall=None):
     """Build the goals for a walk-up -> sit -> stand -> walk-away chain.
 
     The walk-up from start_xy to `front` metres in front of the furniture is split into
@@ -96,10 +96,27 @@ def compose_goals_texts(start_xy, sit_xy, occ, extent, rng, front=0.3, stand=0.5
     n = np.linalg.norm(d)
     u = d / (n if n > 1e-6 else 1e-6)              # unit vector furniture -> start
     approach_pt = sit_xy + front * u               # end of the walk-up, just off the furniture
-    span = np.linalg.norm(approach_pt - start_xy)
-    n_walk_in = max(1, int(np.ceil(span / MAX_HOP)))
-    walk_goals = [start_xy + (approach_pt - start_xy) * ((k + 1) / n_walk_in)
-                  for k in range(n_walk_in)]
+    if tall is not None:
+        # ROUTE the walk-up around walls + OTHER furniture (freeing the target piece) instead of a
+        # straight line -- the same grid planner the end-to-end demo uses (RESULTS §16/§17). Fixes
+        # the interaction demo's weak link: the walk-up was a hardcoded straight line to the target
+        # furniture (below), so it plowed through any chair/table in between. `tall` = 0.9 m raster.
+        from grid_planner import furniture_obstacle, build_levels, plan_path
+        obst = furniture_obstacle(tall, occ, extent, target_xy=sit_xy)
+        levels = build_levels(obst, extent)
+        walk_goals, prev = [], start_xy
+        for wpt in plan_path(start_xy, approach_pt, obst, extent, levels=levels):
+            span = np.linalg.norm(wpt - prev)
+            nh = max(1, int(np.ceil(span / MAX_HOP)))
+            for k in range(nh):
+                walk_goals.append(prev + (wpt - prev) * ((k + 1) / nh))
+            prev = wpt
+        n_walk_in = max(1, len(walk_goals))
+    else:
+        span = np.linalg.norm(approach_pt - start_xy)
+        n_walk_in = max(1, int(np.ceil(span / MAX_HOP)))
+        walk_goals = [start_xy + (approach_pt - start_xy) * ((k + 1) / n_walk_in)
+                      for k in range(n_walk_in)]
     stand_pt = sit_xy + stand * u
     wp = sample_waypoints(occ, extent, stand_pt, 1, min_step=max(0.6, away - 0.4),
                           rng=rng, max_step=away + 0.4)

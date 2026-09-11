@@ -38,7 +38,7 @@ for p in ["src", "scripts/track1", "scripts/scene_probe", "scripts/scene_tokeniz
 import motion_features as mf  # noqa: E402
 from humanise_join import J_LHIP, J_RHIP, J_LSHOULDER, J_RSHOULDER  # noqa: E402
 from se2_utils import se2_place_full_body, world_to_local_xy  # noqa: E402
-from train_probe import build_transformer, COND_EXTRA_DIMS, ACTION_IDS  # noqa: E402
+from train_probe import build_transformer, COND_EXTRA_DIMS, ACTION_IDS, SceneAwareTransformer  # noqa: E402
 
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 OCC_N = 28
@@ -196,7 +196,11 @@ def blend_seam(a_world, b_world, n=4):
 
 def load_model(ckpt_dir):
     ns = json.load(open(os.path.join(ckpt_dir, "norm_stats.json")))
-    tr = build_transformer(ns["clip_dim"])
+    if ns.get("occ_encoder"):
+        post_dim = 4 if ns["cond_mode"] == "full_action" else 0
+        tr = SceneAwareTransformer(occ_embed=ns.get("occ_embed", 32), post_dim=post_dim)
+    else:
+        tr = build_transformer(ns["clip_dim"])
     tr.load_state_dict(torch.load(os.path.join(ckpt_dir, "net_final.pth"),
                                   map_location="cpu")["trans"], strict=True)
     return tr.eval().to(DEV), ns

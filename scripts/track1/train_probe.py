@@ -267,6 +267,84 @@ def build_transformer(clip_dim):
     )
 
 
+# --- Occupancy encoder (Path B margin push) ---------------------------------------------------
+# The scene-aware model (sf2k) works but modestly. Suspected ceiling: occupancy enters the
+# transformer as 784 FLAT pixels through the single cond_emb Linear, competing with 512 text +
+# 66 prefix dims and carrying NO spatial structure -- a Linear cannot cheaply read "obstacle at
+# bearing theta, distance d" off a raveled 28x28 grid. This replaces the raw 784 occ dims in the
+# cond vector with a small CONV encoding (spatially structured, compact), so the transformer gets
+# obstacle GEOMETRY, not a pixel bag. Everything else (text/goal/prefix pathway) is unchanged and
+# warm-started from goalaug; only the occ pathway is new. See memory path-b-scene-aware-plan.
+
+OCC_SIDE = 28
+# occ slice offset in the FULL cond vector [text(512), goal(2), prefix(66), occ(784), (action)]:
+OCC_OFFSET = CLIP_DIM_BASE + 2 + 66  # 580
+OCC_LEN = OCC_SIDE * OCC_SIDE        # 784
+
+
+class OccEncoder(nn.Module):
+    """28x28 occupancy crop -> occ_embed vector. Small CNN: two stride-2 convs + global pool."""
+    def __init__(self, out_dim=32):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 16, 3, stride=2, padding=1), nn.ReLU(),   # 28 -> 14
+            nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(),  # 14 -> 7
+            nn.AdaptiveAvgPool2d(1), nn.Flatten(),                  # (B, 32)
+            nn.Linear(32, out_dim),
+        )
+
+    def forward(self, occ_flat):
+        return self.net(occ_flat.reshape(-1, 1, OCC_SIDE, OCC_SIDE))
+
+
+class SceneAwareTransformer(nn.Module):
+    """Wraps Text2Motion_Transformer, replacing the raw 784-d occ slice of the cond vector with a
+    CNN encoding before the base cond_emb. Same forward(idxs, cond) / sample(cond, ...) interface
+    as the base, so train_probe / rollout / distill_eval use it transparently. post_dim = trailing
+    non-occ cond dims (the action one-hot for full_action; 0 for full)."""
+    def __init__(self, occ_embed=32, post_dim=0):
+        super().__init__()
+        self.occ_embed = occ_embed
+        self.post_dim = post_dim
+        self.occ_encoder = OccEncoder(occ_embed)
+        self.base = build_transformer(OCC_OFFSET + occ_embed + post_dim)
+
+    def _transform(self, cond):
+        pre = cond[:, :OCC_OFFSET]                                   # text + goal + prefix
+        occ = cond[:, OCC_OFFSET:OCC_OFFSET + OCC_LEN]               # 784 (normalized)
+        post = cond[:, OCC_OFFSET + OCC_LEN:]                        # action one-hot or empty
+        return torch.cat([pre, self.occ_encoder(occ), post], dim=-1)
+
+    def forward(self, idxs, cond):
+        return self.base(idxs, self._transform(cond))
+
+    def sample(self, cond, if_categorial=False):
+        return self.base.sample(self._transform(cond), if_categorial)
+
+
+def warm_start_scene_aware(wrapper, base_state):
+    """Warm-start a SceneAwareTransformer from a plain goalaug state dict: copy all base blocks
+    strict, copy the cond_emb TEXT+GOAL+PREFIX columns (occ_embed columns stay fresh), occ_encoder
+    stays random. Preserves the pretrained text/goal/prefix pathway; the occ pathway is relearned
+    (goalaug ignored occ anyway)."""
+    sd = dict(base_state)
+    old_w = sd.pop("trans_base.cond_emb.weight")  # (embed, 1364)
+    old_b = sd.pop("trans_base.cond_emb.bias")
+    missing, unexpected = wrapper.base.load_state_dict(sd, strict=False)
+    assert set(missing) == {"trans_base.cond_emb.weight", "trans_base.cond_emb.bias"}, missing
+    assert not unexpected, unexpected
+    with torch.no_grad():
+        wrapper.base.trans_base.cond_emb.weight[:, :OCC_OFFSET].copy_(old_w[:, :OCC_OFFSET])
+        wrapper.base.trans_base.cond_emb.bias.copy_(old_b)
+        # IDENTITY START: zero the occ_embed cond_emb columns so at iter 0 the encoded occ
+        # contributes NOTHING -> the model == goalaug exactly (high initial acc), then learns to
+        # use occ additively. Without this the fresh occ columns inject noise into the preserved
+        # text/goal/prefix pathway (measured: loss starts ~5.5 instead of ~0.05).
+        wrapper.base.trans_base.cond_emb.weight[:, OCC_OFFSET:OCC_OFFSET + wrapper.occ_embed].zero_()
+    print(f"warm-started SceneAwareTransformer: base blocks strict, cond_emb[:{OCC_OFFSET}] copied, "
+          f"occ_embed cond_emb cols ZEROED (identity start), occ_encoder fresh")
+
+
 def load_pretrained(trans_encoder, conditioned, cond_dim=0):
     ckpt = torch.load(PRETRAINED_TRANS, map_location="cpu")["trans"]
     if not conditioned:
@@ -309,6 +387,20 @@ def main():
                     help="also write net_iter<N>.pth every N iters. Worth setting for long "
                          "runs -- a crash at iter 19000 of 20000 otherwise loses everything.")
     ap.add_argument("--out-name", type=str, default=None)
+    ap.add_argument("--occ-encoder", action="store_true",
+                    help="Path-B margin push: encode the 784-d occ crop with a small CNN "
+                         "(SceneAwareTransformer) instead of feeding it flat into cond_emb. Needs "
+                         "--init-ckpt (goalaug) to warm-start the text/goal/prefix pathway; cond_mode "
+                         "must be full or full_action.")
+    ap.add_argument("--occ-embed", type=int, default=32, help="occ CNN output dim")
+    ap.add_argument("--init-ckpt", type=str, default=None,
+                    help="warm-start from an existing CONDITIONED checkpoint dir (its net_final.pth "
+                         "+ norm_stats.json) instead of the pretrained T2M-GPT transformer. Used for "
+                         "Path-B distillation finetune (memory path-b-scene-aware-plan): continue "
+                         "from step10/goalaug on distilled+real data. CRITICAL: this also REUSES the "
+                         "init ckpt's cond_mean/cond_std rather than recomputing them over the new "
+                         "(mixed) manifest -- recomputed norm would shift the input distribution out "
+                         "from under the warm-started cond_emb weights. cond_mode/clip_dim must match.")
     ap.add_argument("--tokens-dir", type=str, default=TOKENS_DIR,
                     help="token dir from prepare_probe_data.py. MUST match the tokenizer "
                          "the model will be decoded with -- tokens are codebook-specific.")
@@ -323,8 +415,16 @@ def main():
         train_manifest = pickle.load(f)
     print(f"train manifest: {len(train_manifest)} clips")
 
-    cond_mean, cond_std = compute_cond_norm(train_manifest, args.cond_mode)
-    print(f"cond_mode={args.cond_mode} mean={cond_mean} std={cond_std}")
+    if args.init_ckpt:
+        init_ns = json.load(open(os.path.join(args.init_ckpt, "norm_stats.json")))
+        assert init_ns["cond_mode"] == args.cond_mode, \
+            f"init ckpt cond_mode {init_ns['cond_mode']} != --cond-mode {args.cond_mode}"
+        cond_mean = np.array(init_ns["cond_mean"], np.float32)
+        cond_std = np.array(init_ns["cond_std"], np.float32)
+        print(f"cond_mode={args.cond_mode} REUSING norm from {args.init_ckpt} (not recomputed)")
+    else:
+        cond_mean, cond_std = compute_cond_norm(train_manifest, args.cond_mode)
+        print(f"cond_mode={args.cond_mode} mean={cond_mean} std={cond_std}")
 
     dataset = ProbeMotionDataset(train_manifest, args.cond_mode, cond_mean, cond_std,
                                  goal_aug=args.goal_aug, walk_prefix_aug=args.walk_prefix_aug)
@@ -345,8 +445,26 @@ def main():
 
     cond_dim = COND_EXTRA_DIMS[args.cond_mode] if args.conditioned else 0
     clip_dim = CLIP_DIM_BASE + cond_dim
-    trans_encoder = build_transformer(clip_dim)
-    load_pretrained(trans_encoder, args.conditioned, cond_dim)
+    if args.occ_encoder:
+        assert args.conditioned and args.cond_mode in ("full", "full_action"), \
+            "--occ-encoder requires --conditioned and cond_mode full/full_action"
+        assert args.init_ckpt, "--occ-encoder needs --init-ckpt (goalaug) to warm-start"
+        post_dim = 4 if args.cond_mode == "full_action" else 0
+        trans_encoder = SceneAwareTransformer(occ_embed=args.occ_embed, post_dim=post_dim)
+        base_state = torch.load(os.path.join(args.init_ckpt, "net_final.pth"),
+                                map_location="cpu")["trans"]
+        warm_start_scene_aware(trans_encoder, base_state)
+    else:
+        trans_encoder = build_transformer(clip_dim)
+        if args.init_ckpt:
+            init_ns = json.load(open(os.path.join(args.init_ckpt, "norm_stats.json")))
+            assert init_ns["clip_dim"] == clip_dim, \
+                f"init ckpt clip_dim {init_ns['clip_dim']} != {clip_dim}"
+            sd = torch.load(os.path.join(args.init_ckpt, "net_final.pth"), map_location="cpu")["trans"]
+            trans_encoder.load_state_dict(sd, strict=True)
+            print(f"warm-started from {args.init_ckpt}/net_final.pth (strict=True)")
+        else:
+            load_pretrained(trans_encoder, args.conditioned, cond_dim)
     trans_encoder.train()
     trans_encoder.to(DEVICE)
 
@@ -405,7 +523,8 @@ def main():
         json.dump({"cond_mean": cond_mean.tolist(), "cond_std": cond_std.tolist(),
                    "cond_mode": args.cond_mode, "conditioned": args.conditioned,
                    "clip_dim": clip_dim, "tokens_dir": args.tokens_dir,
-                   "goal_aug": args.goal_aug, "walk_prefix_aug": args.walk_prefix_aug}, f)
+                   "goal_aug": args.goal_aug, "walk_prefix_aug": args.walk_prefix_aug,
+                   "occ_encoder": args.occ_encoder, "occ_embed": args.occ_embed}, f)
     print(f"saved {ckpt_path}")
 
 

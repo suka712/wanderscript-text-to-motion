@@ -229,7 +229,7 @@ def gen_interaction(net, mean, std, cmodel, trans, ns):
         yaw = float(np.arctan2(d[1], d[0]))
         start_pose = np.array([s_xy[0], s_xy[1], np.sin(yaw), np.cos(yaw)], np.float32)
         goals, nwi = compose_goals_texts(start_pose[:2], sit_xy, occ, extent, rng,
-                                         front=ARGS.front, stand=0.5, away=1.3)
+                                         front=ARGS.front, stand=0.5, away=1.3, tall=tall)
         obj = object_phrase(rec.utterance)
         texts = [f"walk to {obj}"] * nwi + [rec.utterance, f"stand up from {obj}", "walk to the door"]
         actions = ["walk"] * nwi + ["sit", "stand up", "walk"]
@@ -244,6 +244,60 @@ def gen_interaction(net, mean, std, cmodel, trans, ns):
         sat = float(zs[nwi][-1]) < 0.7 and float(zs[nwi + 1][-1]) > 0.8
         print(f"  try {tried} {rec.scene} {obj:20s} SAT&STOOD={sat}", flush=True)
         if sat:
+            return segs, rec, obj
+    return None
+
+
+def gen_lie(net, mean, std, cmodel, trans, ns):
+    """Retry lie seeds until a chain walks up and LIES DOWN (pelvis low at the end). walk..->lie.
+    Same recipe as gen_interaction but the interaction is a single lie segment (no stand/away)."""
+    flat = build_flat_join()
+    seeds = [i for i, p in enumerate(flat) if p["action"] == "lie"]
+    rng = np.random.RandomState(ARGS.seed); rng.shuffle(seeds)
+    tried = 0
+    for idx in seeds:
+        if tried >= ARGS.n_try:
+            break
+        rec = get_record(int(idx))
+        if ARGS.scene and rec.scene != ARGS.scene:
+            continue
+        a = scene_assets(rec, idx)
+        if a is None:
+            continue
+        occ, extent, tall = a
+        cm = np.load(os.path.join(HUMANISE, "contact_motion", "motions", f"{idx:05d}.npy"))
+        try:
+            d0, *_ = mf.humanise_positions_to_263(cm)
+        except Exception:
+            continue
+        if d0.shape[0] < 8:
+            continue
+        _, xy, _, sincos = compute_track2(rec)
+        lie_xy = xy[-1].astype(np.float32)
+        prefix = mf.local_joint_positions(d0.astype(np.float32))[0].ravel()
+        sp = sample_waypoints(occ, extent, lie_xy, 1, min_step=max(0.6, ARGS.start_dist - 0.5),
+                              rng=rng, max_step=ARGS.start_dist + 0.5)
+        if not sp:
+            continue
+        s_xy = np.asarray(sp[0], float); d = lie_xy - s_xy
+        yaw = float(np.arctan2(d[1], d[0]))
+        start_pose = np.array([s_xy[0], s_xy[1], np.sin(yaw), np.cos(yaw)], np.float32)
+        goals, nwi = compose_goals_texts(start_pose[:2], lie_xy, occ, extent, rng,
+                                         front=ARGS.front, stand=0.5, away=1.3, tall=tall)
+        goals = list(goals[:nwi]) + [lie_xy]  # walk-up hops, then lie ON the furniture
+        obj = object_phrase(rec.utterance)
+        texts = [f"walk to {obj}"] * nwi + [rec.utterance]
+        actions = ["walk"] * nwi + ["lie"]
+        tried += 1
+        segs = rollout(trans, net, cmodel, clip, mean, std, ns, texts, goals, start_pose, prefix,
+                       occ, extent,
+                       actions=actions if ns["cond_mode"] in ("full_action", "full_action_head") else None,
+                       reorient=True)
+        if len(segs) < len(goals):
+            continue
+        lay = float(pelvis_z(segs[nwi])[-1]) < 0.35
+        print(f"  try {tried} {rec.scene} {obj:20s} LAYDOWN={lay}", flush=True)
+        if lay:
             return segs, rec, obj
     return None
 
@@ -300,7 +354,7 @@ def gen_navigation(net, mean, std, cmodel, trans, ns):
 def main():
     global ARGS
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["interaction", "navigation"], required=True)
+    ap.add_argument("--mode", choices=["interaction", "navigation", "lie"], required=True)
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--vqvae-ckpt", required=True)
     ap.add_argument("--out", required=True)
@@ -325,8 +379,10 @@ def main():
 
     net, mean, std, cmodel, trans, ns = load_common()
     print(f"mode={ARGS.mode} cond_mode={ns['cond_mode']}\n", flush=True)
-    got = gen_interaction(*(net, mean, std, cmodel, trans, ns)) if ARGS.mode == "interaction" \
-        else gen_navigation(*(net, mean, std, cmodel, trans, ns))
+    args_t = (net, mean, std, cmodel, trans, ns)
+    got = (gen_interaction(*args_t) if ARGS.mode == "interaction"
+           else gen_lie(*args_t) if ARGS.mode == "lie"
+           else gen_navigation(*args_t))
     if got is None:
         print("no suitable chain produced"); return
     segs, rec, label = got

@@ -3,10 +3,22 @@
 Volatile state that is NOT captured by RESULTS.md: what is running, where things live on the
 boxes, and the next concrete action. **Update or delete this file when its work lands.**
 
-Last updated: 2026-09-02 (wall-aware routing + foot-contact deskating). Steps 1-13 done. Best interaction model
-`~/wander_data/step11/checkpoints/action` (`cond_mode=full_action`); best navigation model
-`~/wander_data/step10/checkpoints/goalaug` (`cond_mode=full`); finetuned VQ-VAE
-`~/wander_data/motion_data/track2_checkpoints/net_iter020000.pth`.
+Last updated: 2026-09-11 (TRUMANS conversion + Path B Stage 1 done). Steps 1-13 done. Best interaction model
+`~/wander_data/step11/checkpoints/action` (`cond_mode=full_action`); best navigation model with scene-awareness
+`~/wander_data/pathb/checkpoints/pv_2000` (`cond_mode=full`, greedy avoids obstacles — ablation-confirmed);
+finetuned VQ-VAE `/media/user/2tb/motion_data/track2_checkpoints/track2_joint_finetune_run1/net_iter020000.pth`.
+
+**PATH B STAGE 1 DONE (2026-09-11) — greedy avoidance is LEARNED, ablation-confirmed.** See `memory/path-b-scene-aware-plan.md`.
+Best model `pv_2000`: 8.95% coll (vs line 11.64%, pre 9.70%); occ-ablation +1.6 pts — genuine occ-gated avoidance.
+
+**TRUMANS DATASET CONVERTED (2026-09-11) — 6200 clips tokenized, combined manifest ready on ntx.**
+- TRUMANS → 263-dim + tracks: `scripts/trumans/convert_trumans.py` (action-transition splitting, pelvis-height posture classification)
+- Manifest built: `scripts/trumans/build_trumans_manifest.py` (geometric fields + GPU tokenization + scene occ_crop)
+- Combined: `~/wander_data/trumans_combined_tokens/train.pkl` — **21,832 clips** (15,632 HUMANISE + 6,200 TRUMANS)
+- Seat height variety: sit clips span **0.38–0.85 m** (σ=0.108), vs HUMANISE's near-zero variation
+- Data: `/media/user/2tb/motion_data/TRUMANS/` (raw), `/media/user/2tb/motion_data/TRUMANS_processed/` (263/track2/occ cache)
+- TRUMANS-only tokens: `/home/user/wander_data/trumans_tokens/train.pkl` (6200 entries)
+- **Next**: extract heightmaps for TRUMANS clips → add heightmap_1024 to transformer → train on combined data → eval seat-height correctness
 
 **STEP 12 DONE (2026-09-02) — collision-guided decoding works. RESULTS §13.**
 `scripts/chaining/collision_guided.py` adds inference-time scene steering (no training). On 20×6
