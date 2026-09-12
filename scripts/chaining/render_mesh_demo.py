@@ -31,7 +31,7 @@ from trimesh.creation import uv_sphere, cylinder
 import pyrender
 
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
-for p in ["src", "scripts/track1", "scripts/chaining"]:
+for p in ["src", "scripts/track1", "scripts/chaining", "scripts/scene_tokenizer"]:
     sys.path.insert(0, os.path.join(REPO_ROOT, p))
 
 import motion_features as mf  # noqa: E402
@@ -186,6 +186,13 @@ def stitch(segs, blend_n):
 
 def load_common():
     net = load_vqvae(ckpt_path=ARGS.vqvae_ckpt, device=DEV); net.eval()
+    if ARGS.scene_vqvae:
+        from scene_vqvae import SceneVQVAE
+        scene_net = SceneVQVAE(net).to(DEV)
+        scene_net.load_state_dict(torch.load(ARGS.scene_vqvae, map_location=DEV)["net"])
+        scene_net.eval()
+        net = scene_net
+        print(f"[SceneVQVAE loaded from {ARGS.scene_vqvae}]", flush=True)
     mean = np.load(f"{T2M}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/mean.npy").astype(np.float32)
     std = np.load(f"{T2M}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/std.npy").astype(np.float32)
     cmodel, _ = clip.load("ViT-B/32", device=DEV, jit=False); cmodel.eval()
@@ -244,10 +251,15 @@ def gen_interaction(net, mean, std, cmodel, trans, ns):
         texts = [f"walk to {obj}"] * nwi + [rec.utterance, f"stand up from {obj}", "walk to the door"]
         actions = ["walk"] * nwi + ["sit", "stand up", "walk"]
         tried += 1
+        # Build scene_ctx for heightmap-conditioned decode when using a SceneVQVAE
+        _scene_ctx = None
+        if ARGS.scene_vqvae:
+            from scene_decode import build_scene_context
+            _scene_ctx = build_scene_context(rec.scene)
         segs = rollout(trans, net, cmodel, clip, mean, std, ns, texts, goals, start_pose, prefix,
                        occ, extent,
                        actions=actions if ns["cond_mode"] in ("full_action", "full_action_head") else None,
-                       reorient=True)
+                       reorient=True, scene_ctx=_scene_ctx)
         if len(segs) < len(goals):
             continue
         zs = [pelvis_z(s) for s in segs]
@@ -367,6 +379,8 @@ def main():
     ap.add_argument("--mode", choices=["interaction", "navigation", "lie"], required=True)
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--vqvae-ckpt", required=True)
+    ap.add_argument("--scene-vqvae", default=None,
+                    help="SceneVQVAE checkpoint for heightmap-conditioned decode")
     ap.add_argument("--out", required=True)
     ap.add_argument("--scene", default=None, help="restrict to a specific scene id")
     ap.add_argument("--n-try", type=int, default=30)

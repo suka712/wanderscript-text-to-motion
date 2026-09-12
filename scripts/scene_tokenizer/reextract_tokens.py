@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Stage 7a: re-extract tokens with the new (unfrozen, height-agnostic) tokenizer, reusing the
-existing step-11 manifest's GEOMETRIC fields.
+"""Re-extract tokens with a scene-grounded VQ-VAE, reusing geometric fields from an existing
+manifest.
 
 Only `tokens` depends on the tokenizer; prefix_pose, occ_crop, xy_traj, start, goal, action, text
-are geometric (world track / scene / GT pose) and tokenizer-INDEPENDENT. So we load the existing
-manifest, re-encode each clip's 263 with the new encoder+quantizer, and SWAP the tokens field,
-keeping everything the transformer's full_action conditioning needs. Same normalization + crop as
-prepare_probe_data (evaluator-consistent mean/std, crop_to_multiple), so the new token sequence
-lines up 1:1 with the record it replaces.
+are geometric and tokenizer-INDEPENDENT. We load the existing manifest, re-encode each clip's 263
+with the new encoder+quantizer, and SWAP the tokens field.
+
+Supports mixed HUMANISE+TRUMANS manifests: TRUMANS clips (identified by having a `scene` key) load
+263 from the TRUMANS 263 cache; HUMANISE clips load from contact_motion and convert to 263.
 """
 import argparse
 import os
@@ -27,16 +27,35 @@ from prepare_probe_data import crop_to_multiple  # noqa: E402
 
 HUMANISE = os.environ.get("WANDER_HUMANISE_ROOT")
 T2M = os.environ.get("WANDER_T2M_GPT_ROOT")
+TRUMANS_263_CACHE = os.environ.get(
+    "WANDER_TRUMANS_263_CACHE",
+    "/media/user/2tb/motion_data/TRUMANS_processed/trumans_263_cache",
+)
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _load_263(rec):
+    """Load the 263-dim motion for a manifest record, dispatching by source."""
+    idx = rec["index"]
+    if "scene" in rec:
+        # TRUMANS clip — 263 already computed in cache
+        return np.load(os.path.join(TRUMANS_263_CACHE, f"{idx:05d}.npy")).astype(np.float32)
+    else:
+        # HUMANISE clip — derive 263 from contact_motion
+        cm = np.load(os.path.join(HUMANISE, "contact_motion", "motions", f"{idx:05d}.npy"))
+        d263, *_ = mf.humanise_positions_to_263(cm)
+        return d263
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scene-vqvae", required=True)
     ap.add_argument("--base-vqvae", default=os.path.expanduser(
-        "~/wander_data/motion_data/track2_checkpoints/net_iter020000.pth"))
-    ap.add_argument("--src-tokens", default=os.path.expanduser("~/wander_data/step10/tokens"),
-                    help="existing manifest dir (train.pkl/test.pkl) to copy geometric fields from")
+        "~/Khiem/T2M-GPT/pretrained/VQVAE/net_best_fid.pth"),
+        help="base VQ-VAE for architecture (weights overwritten by scene-vqvae state)")
+    ap.add_argument("--src-tokens", default=os.path.expanduser(
+        "~/wander_data/trumans_combined_tokens"),
+        help="existing manifest dir (train.pkl and optionally test.pkl)")
     ap.add_argument("--out", required=True, help="output tokens dir")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -48,20 +67,25 @@ def main():
     mean = np.load(f"{T2M}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/mean.npy").astype(np.float32)
     std = np.load(f"{T2M}/checkpoints/t2m/VQVAEV3_CB1024_CMT_H1024_NRES3/meta/std.npy").astype(np.float32)
 
-    n_changed = n_len = 0
+    n_changed = n_len = n_hum = n_tru = 0
     with torch.no_grad():
         for split in ["train", "test"]:
-            with open(os.path.join(args.src_tokens, f"{split}.pkl"), "rb") as f:
+            src_path = os.path.join(args.src_tokens, f"{split}.pkl")
+            if not os.path.exists(src_path):
+                print(f"{split}: skipped (no {src_path})", flush=True)
+                continue
+            with open(src_path, "rb") as f:
                 manifest = pickle.load(f)
             for rec in manifest:
-                idx = rec["index"]
-                cm = np.load(os.path.join(HUMANISE, "contact_motion", "motions", f"{idx:05d}.npy"))
-                d263, *_ = mf.humanise_positions_to_263(cm)
+                d263 = _load_263(rec)
+                is_trumans = "scene" in rec
+                if is_trumans:
+                    n_tru += 1
+                else:
+                    n_hum += 1
                 old_tok = rec["tokens"]
-                # CRITICAL: step10 tokenized the FIRST T frames where T = len(tokens)*4 (verified:
-                # len(xy_traj)==len(tokens)*4 and xy_traj==xy[:T]). Reproduce that exact crop so the
-                # new tokens describe the SAME motion the reused geometric fields (goal/prefix/
-                # xy_traj) were computed for -- NOT crop_to_multiple(T263), which gave 2x too many.
+                # Reproduce the exact crop: T = len(old_tokens) * 4 frames, so the new tokens
+                # describe the SAME motion the reused geometric fields were computed for.
                 T = len(old_tok) * 4
                 norm = (d263[:T].astype(np.float32) - mean) / std
                 x = torch.from_numpy(norm).unsqueeze(0).to(DEV)
@@ -76,8 +100,7 @@ def main():
             with open(os.path.join(args.out, f"{split}.pkl"), "wb") as f:
                 pickle.dump(manifest, f)
             print(f"{split}: {len(manifest)} clips re-tokenized -> {args.out}/{split}.pkl", flush=True)
-    print(f"changed token seqs: {n_changed}  length-mismatch clips: {n_len} "
-          f"(expect changed high -- new codebook; mismatch ~0)")
+    print(f"changed: {n_changed}  len-mismatch: {n_len}  humanise: {n_hum}  trumans: {n_tru}")
 
 
 if __name__ == "__main__":
