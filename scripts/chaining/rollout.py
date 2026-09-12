@@ -65,8 +65,9 @@ HEAD_MIN_DISP = 0.4  # below this displacement, don't command a turn (e.g. sitti
 
 
 def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmean, cstd,
-               action=None, head_target=None):
-    ACT = ("full_action", "full_action_head")
+               action=None, head_target=None, heightmap_fn=None):
+    """heightmap_fn: callable (xy, yaw) -> (1024,) flattened heightmap, or None."""
+    ACT = ("full_action", "full_action_head", "full_action_hm")
     parts = [world_to_local_xy(goal_world, start_pose).ravel()]
     if cond_mode in ("rel_prefix", "full") + ACT:
         parts.append(prefix_pose)
@@ -94,6 +95,13 @@ def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmea
         else:
             delta = 0.0
         parts.append(np.array([np.sin(delta), np.cos(delta)], np.float32))
+    if cond_mode == "full_action_hm":
+        yaw_val = float(np.arctan2(start_pose[2], start_pose[3]))
+        if heightmap_fn is not None:
+            hm = heightmap_fn(start_pose[:2], yaw_val)
+        else:
+            hm = np.zeros(32 * 32, dtype=np.float32)
+        parts.append(np.asarray(hm, np.float32).ravel())
     raw = np.concatenate(parts).astype(np.float32)
     return ((raw - cmean) / cstd).astype(np.float32)
 
@@ -101,7 +109,8 @@ def build_cond(cond_mode, goal_world, start_pose, prefix_pose, occ, extent, cmea
 def rollout(trans, net, clip_model, clip_mod, mean, std, ns, texts, goals,
             start_pose, prefix_pose, occ=None, extent=None, max_seg=None, actions=None,
             reorient=False, head_targets=None, scene_ctx=None, decode_iters=2,
-            seg_headings=None, deskate_feet=False, deskate_floor=0.0):
+            seg_headings=None, deskate_feet=False, deskate_floor=0.0,
+            heightmap_fn=None):
     """Chain len(goals) segments. Returns list of per-segment dicts.
 
     actions: per-segment action name (walk/sit/stand up/lie), required when the model's
@@ -142,7 +151,8 @@ def rollout(trans, net, clip_model, clip_mod, mean, std, ns, texts, goals,
             feat = clip_model.encode_text(
                 clip_mod.tokenize([txt], truncate=True).to(DEV)).float()
             extra = build_cond(ns["cond_mode"], np.asarray(goal, float), pose,
-                               prefix, occ, extent, cmean, cstd, action=act, head_target=ht)
+                               prefix, occ, extent, cmean, cstd, action=act, head_target=ht,
+                               heightmap_fn=heightmap_fn)
             cond = torch.cat([feat, torch.from_numpy(extra).unsqueeze(0).to(DEV)], -1)
             tok = trans.sample(cond, if_categorial=False)
             if tok.numel() == 0:
@@ -197,7 +207,12 @@ def blend_seam(a_world, b_world, n=4):
 def load_model(ckpt_dir):
     ns = json.load(open(os.path.join(ckpt_dir, "norm_stats.json")))
     if ns.get("occ_encoder"):
-        post_dim = 4 if ns["cond_mode"] == "full_action" else 0
+        if ns["cond_mode"] == "full_action_hm":
+            post_dim = 4 + 32 * 32
+        elif ns["cond_mode"] == "full_action":
+            post_dim = 4
+        else:
+            post_dim = 0
         tr = SceneAwareTransformer(occ_embed=ns.get("occ_embed", 32), post_dim=post_dim)
     else:
         tr = build_transformer(ns["clip_dim"])

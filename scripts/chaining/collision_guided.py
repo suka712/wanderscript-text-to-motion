@@ -127,8 +127,10 @@ def run_chain(trans, net, cmodel, mean, std, ns, texts, goals, start_pose, prefi
             if reorient:
                 pose = _reorient_pose(pose, goal)
             feat = cmodel.encode_text(clip.tokenize([txt], truncate=True).to(DEV)).float()
+            # Navigation chains are all walks; pass action="walk" when the model needs it
+            _act = "walk" if ns["cond_mode"] in ("full_action", "full_action_head", "full_action_hm") else None
             extra = build_cond(ns["cond_mode"], np.asarray(goal, float), pose, pfx,
-                               occ, extent, cmean, cstd)
+                               occ, extent, cmean, cstd, action=_act)
             cond = torch.cat([feat, torch.from_numpy(extra).unsqueeze(0).to(DEV)], -1)
 
             if mode == "guided_seg":

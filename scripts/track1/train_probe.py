@@ -111,7 +111,14 @@ COND_EXTRA_DIMS = {"abs": 6, "rel": 2, "rel_prefix": 2 + 66,
                    # (RESULTS §11). Body facing is orientation info the goal lacks, so it is
                    # a non-redundant signal the model must actually use. At inference we
                    # command facing = direction of travel (see rollout.build_cond).
-                   "full_action_head": 2 + 66 + 28 * 28 + 4 + 2}
+                   "full_action_head": 2 + 66 + 28 * 28 + 4 + 2,
+                   # full_action + a start-frame local heightmap (32x32 = 1024,
+                   # scene_heightmap.py definition, clip-floor-referenced). The
+                   # occupancy footprint tells WHERE obstacles are; the heightmap
+                   # tells HOW HIGH surfaces are, so the model can distinguish a
+                   # 0.45 m chair from a 0.65 m desk seat and generate a sit that
+                   # matches. Added for the TRUMANS seat-height variety track.
+                   "full_action_hm": 2 + 66 + 28 * 28 + 4 + 32 * 32}
 
 # HUMANISE's 4-way action taxonomy, in the order build_flat_join/natsort yields.
 ACTION_IDS = {"walk": 0, "sit": 1, "stand up": 2, "lie": 3}
@@ -143,7 +150,7 @@ def cond_extra_raw(d, cond_mode):
             d["prefix_pose"],
             d["occ_crop"],
         ]).astype(np.float32)
-    if cond_mode in ("full_action", "full_action_head"):
+    if cond_mode in ("full_action", "full_action_head", "full_action_hm"):
         onehot = np.zeros(4, np.float32)
         onehot[ACTION_IDS[d["action"]]] = 1.0
         parts = [
@@ -154,6 +161,16 @@ def cond_extra_raw(d, cond_mode):
         ]
         if cond_mode == "full_action_head":
             parts.append(np.asarray(d["goal_heading"], np.float32))  # (sin, cos) rel to start
+        if cond_mode == "full_action_hm":
+            # Start-frame local heightmap (32x32 flattened = 1024). Clip-floor-
+            # referenced surface height (metres) under the body. Clips without
+            # scene geometry (H3D, missing meshes) carry a flat-floor (zeros) vector,
+            # same as scene_joint_dataset for the tokenizer — so the signal is
+            # additive: zero heightmap = no scene info, same as without it.
+            hm = d.get("heightmap_1024")
+            if hm is None:
+                hm = np.zeros(32 * 32, dtype=np.float32)
+            parts.append(np.asarray(hm, np.float32))
         return np.concatenate(parts).astype(np.float32)
     raise ValueError(cond_mode)
 
@@ -173,6 +190,14 @@ def compute_cond_norm(manifest, cond_mode):
     if cond_mode == "full_action_head":
         mean[-6:] = 0.0  # action one-hot (4) + heading sin/cos (2): all already unit-scale
         std[-6:] = 1.0
+    if cond_mode == "full_action_hm":
+        # action one-hot (4): keep as clean 0/1
+        # The 1024 heightmap dims are metres with natural scale ~0-2; normalizing them
+        # is fine (and important — they go through the same cond_emb Linear as the rest).
+        # But the action one-hot sits right before the heightmap: [-1028:-1024].
+        hm_dim = 32 * 32
+        mean[-(hm_dim + 4):-(hm_dim)] = 0.0   # action one-hot
+        std[-(hm_dim + 4):-(hm_dim)] = 1.0
     return mean, std
 
 
@@ -367,11 +392,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--conditioned", action="store_true")
     ap.add_argument("--cond-mode",
-                    choices=["rel", "abs", "rel_prefix", "full", "full_action", "full_action_head"],
+                    choices=["rel", "abs", "rel_prefix", "full", "full_action",
+                             "full_action_head", "full_action_hm"],
                     default="rel",
                     help="frame the goal is expressed in; see module docstring. "
                          "full_action adds a 4-way action one-hot; full_action_head also adds a "
-                         "target heading (Step 11). Ignored when --conditioned is not set.")
+                         "target heading (Step 11); full_action_hm adds a 32x32 start-frame "
+                         "heightmap for seat-height awareness. Ignored when --conditioned is not set.")
     ap.add_argument("--iters", type=int, default=4000)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -417,11 +444,27 @@ def main():
 
     if args.init_ckpt:
         init_ns = json.load(open(os.path.join(args.init_ckpt, "norm_stats.json")))
-        assert init_ns["cond_mode"] == args.cond_mode, \
-            f"init ckpt cond_mode {init_ns['cond_mode']} != --cond-mode {args.cond_mode}"
-        cond_mean = np.array(init_ns["cond_mean"], np.float32)
-        cond_std = np.array(init_ns["cond_std"], np.float32)
-        print(f"cond_mode={args.cond_mode} REUSING norm from {args.init_ckpt} (not recomputed)")
+        old_cond_mode = init_ns["cond_mode"]
+        if old_cond_mode == args.cond_mode:
+            cond_mean = np.array(init_ns["cond_mean"], np.float32)
+            cond_std = np.array(init_ns["cond_std"], np.float32)
+            print(f"cond_mode={args.cond_mode} REUSING norm from {args.init_ckpt} (not recomputed)")
+        else:
+            # Cross-mode warm-start (e.g. full_action -> full_action_hm): keep the init
+            # ckpt's norms for the overlapping prefix dims (so the warm-started cond_emb
+            # sees the same distribution), compute fresh norms only for the NEW trailing dims.
+            old_dim = COND_EXTRA_DIMS[old_cond_mode]
+            new_dim = COND_EXTRA_DIMS[args.cond_mode]
+            assert new_dim > old_dim, \
+                f"cross-mode warm-start only supports adding dims ({old_cond_mode}={old_dim} -> {args.cond_mode}={new_dim})"
+            old_mean = np.array(init_ns["cond_mean"], np.float32)
+            old_std = np.array(init_ns["cond_std"], np.float32)
+            # Compute fresh norms for the full new vector, then overwrite the prefix with old
+            fresh_mean, fresh_std = compute_cond_norm(train_manifest, args.cond_mode)
+            cond_mean = np.concatenate([old_mean, fresh_mean[old_dim:]])
+            cond_std = np.concatenate([old_std, fresh_std[old_dim:]])
+            print(f"cond_mode={args.cond_mode} cross-mode warm-start: norm[:{old_dim}] from "
+                  f"{args.init_ckpt} ({old_cond_mode}), norm[{old_dim}:{new_dim}] fresh")
     else:
         cond_mean, cond_std = compute_cond_norm(train_manifest, args.cond_mode)
         print(f"cond_mode={args.cond_mode} mean={cond_mean} std={cond_std}")
@@ -446,10 +489,16 @@ def main():
     cond_dim = COND_EXTRA_DIMS[args.cond_mode] if args.conditioned else 0
     clip_dim = CLIP_DIM_BASE + cond_dim
     if args.occ_encoder:
-        assert args.conditioned and args.cond_mode in ("full", "full_action"), \
-            "--occ-encoder requires --conditioned and cond_mode full/full_action"
+        assert args.conditioned and args.cond_mode in ("full", "full_action", "full_action_hm"), \
+            "--occ-encoder requires --conditioned and cond_mode full/full_action/full_action_hm"
         assert args.init_ckpt, "--occ-encoder needs --init-ckpt (goalaug) to warm-start"
-        post_dim = 4 if args.cond_mode == "full_action" else 0
+        # post_dim = trailing cond dims AFTER the occ slice (action one-hot + optional hm)
+        if args.cond_mode == "full_action":
+            post_dim = 4
+        elif args.cond_mode == "full_action_hm":
+            post_dim = 4 + 32 * 32  # action one-hot + heightmap
+        else:
+            post_dim = 0
         trans_encoder = SceneAwareTransformer(occ_embed=args.occ_embed, post_dim=post_dim)
         base_state = torch.load(os.path.join(args.init_ckpt, "net_final.pth"),
                                 map_location="cpu")["trans"]
@@ -458,11 +507,33 @@ def main():
         trans_encoder = build_transformer(clip_dim)
         if args.init_ckpt:
             init_ns = json.load(open(os.path.join(args.init_ckpt, "norm_stats.json")))
-            assert init_ns["clip_dim"] == clip_dim, \
-                f"init ckpt clip_dim {init_ns['clip_dim']} != {clip_dim}"
+            old_clip_dim = init_ns["clip_dim"]
             sd = torch.load(os.path.join(args.init_ckpt, "net_final.pth"), map_location="cpu")["trans"]
-            trans_encoder.load_state_dict(sd, strict=True)
-            print(f"warm-started from {args.init_ckpt}/net_final.pth (strict=True)")
+            if old_clip_dim == clip_dim:
+                trans_encoder.load_state_dict(sd, strict=True)
+                print(f"warm-started from {args.init_ckpt}/net_final.pth (strict=True)")
+            elif old_clip_dim < clip_dim:
+                # Partial warm-start: the new cond_mode appends extra dims (e.g. full_action
+                # -> full_action_hm adds 1024 heightmap dims). Copy all old columns of cond_emb
+                # and ZERO the new columns so at iter 0 the model == the init ckpt exactly
+                # (identity start), then learns to use the new signal additively. Same pattern
+                # as warm_start_scene_aware.
+                old_w = sd.pop("trans_base.cond_emb.weight")  # (embed_dim, old_clip_dim)
+                old_b = sd.pop("trans_base.cond_emb.bias")    # (embed_dim,)
+                missing, unexpected = trans_encoder.load_state_dict(sd, strict=False)
+                assert set(missing) == {"trans_base.cond_emb.weight", "trans_base.cond_emb.bias"}, missing
+                assert not unexpected, unexpected
+                with torch.no_grad():
+                    trans_encoder.trans_base.cond_emb.weight[:, :old_clip_dim].copy_(old_w)
+                    trans_encoder.trans_base.cond_emb.bias.copy_(old_b)
+                    # Zero the new columns -> identity start (new dims contribute nothing at
+                    # iter 0; the model trains them from scratch while preserving the rest).
+                    trans_encoder.trans_base.cond_emb.weight[:, old_clip_dim:].zero_()
+                print(f"warm-started from {args.init_ckpt}/net_final.pth (partial: "
+                      f"cond_emb[:{old_clip_dim}] copied, [{old_clip_dim}:{clip_dim}] ZEROED)")
+            else:
+                raise ValueError(f"init ckpt clip_dim {old_clip_dim} > new clip_dim {clip_dim} — "
+                                 f"cannot warm-start by shrinking")
         else:
             load_pretrained(trans_encoder, args.conditioned, cond_dim)
     trans_encoder.train()

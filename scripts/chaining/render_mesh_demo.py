@@ -89,8 +89,18 @@ def clip_ceiling(mesh, cutoff_m):
 
 def write_mp4(frames, path, fps):
     H, W = frames[0].shape[:2]
-    cmd = ["ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-           "-r", str(fps), "-i", "-", "-an", "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+    # Try libx264 first (best quality), fall back to libopenh264 (conda ffmpeg)
+    import shutil
+    _ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    _codec = "libx264"
+    try:
+        _probe = subprocess.run([_ffmpeg, "-codecs"], capture_output=True, text=True, timeout=5)
+        if "libx264" not in _probe.stdout and "libopenh264" in _probe.stdout:
+            _codec = "libopenh264"
+    except Exception:
+        pass
+    cmd = [_ffmpeg, "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+           "-r", str(fps), "-i", "-", "-an", "-vcodec", _codec, "-pix_fmt", "yuv420p",
            "-crf", "20", path]
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL)

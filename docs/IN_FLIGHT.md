@@ -3,10 +3,11 @@
 Volatile state that is NOT captured by RESULTS.md: what is running, where things live on the
 boxes, and the next concrete action. **Update or delete this file when its work lands.**
 
-Last updated: 2026-09-11 (TRUMANS conversion + Path B Stage 1 done). Steps 1-13 done. Best interaction model
-`~/wander_data/step11/checkpoints/action` (`cond_mode=full_action`); best navigation model with scene-awareness
-`~/wander_data/pathb/checkpoints/pv_2000` (`cond_mode=full`, greedy avoids obstacles — ablation-confirmed);
-finetuned VQ-VAE `/media/user/2tb/motion_data/track2_checkpoints/track2_joint_finetune_run1/net_iter020000.pth`.
+Last updated: 2026-09-12 (heightmap extraction + transformer conditioning for seat-height). Steps 1-13 done.
+Best interaction model `~/wander_data/step11/checkpoints/action` (`cond_mode=full_action`); best navigation
+model with scene-awareness `~/wander_data/pathb/checkpoints/pv_2000` (`cond_mode=full`, greedy avoids
+obstacles — ablation-confirmed); finetuned VQ-VAE
+`/media/user/2tb/motion_data/track2_checkpoints/track2_joint_finetune_run1/net_iter020000.pth`.
 
 **PATH B STAGE 1 DONE (2026-09-11) — greedy avoidance is LEARNED, ablation-confirmed.** See `memory/path-b-scene-aware-plan.md`.
 Best model `pv_2000`: 8.95% coll (vs line 11.64%, pre 9.70%); occ-ablation +1.6 pts — genuine occ-gated avoidance.
@@ -18,7 +19,14 @@ Best model `pv_2000`: 8.95% coll (vs line 11.64%, pre 9.70%); occ-ablation +1.6 
 - Seat height variety: sit clips span **0.38–0.85 m** (σ=0.108), vs HUMANISE's near-zero variation
 - Data: `/media/user/2tb/motion_data/TRUMANS/` (raw), `/media/user/2tb/motion_data/TRUMANS_processed/` (263/track2/occ cache)
 - TRUMANS-only tokens: `/home/user/wander_data/trumans_tokens/train.pkl` (6200 entries)
-- **Next**: extract heightmaps for TRUMANS clips → add heightmap_1024 to transformer → train on combined data → eval seat-height correctness
+- **Track 1 DONE (2026-09-12)**: heightmap conditioning for seat-height awareness.
+  - Heightmap caches: `~/wander_data/trumans_heightmap_cache/` (6200 TRUMANS), `~/wander_data/motion_data/HUMANISE_heightmap_cache/` (19648 HUMANISE)
+  - Heightmap-augmented manifest: `~/wander_data/trumans_combined_tokens_hm/train.pkl` (21,832 clips, all with heightmap_1024)
+  - Model: `~/wander_data/step_hm/checkpoints/action_hm` (`cond_mode=full_action_hm`, warm-started from step-11 action)
+  - **Best corr at 4k iters** (`net_best_corr.pth` = `net_iter004000.pth`): corr(seat, pelvis) = **0.451** vs baseline 0.314 (+44%)
+  - Same "redundancy trap" as RESULTS §12: heightmap peaks at 4k, then the token's built-in height wins at convergence (20k: 0.386)
+  - Code: `scripts/trumans/{extract_heightmaps,add_heightmaps_to_manifest,eval_seat_height}.py`;
+    `train_probe.py` cross-mode warm-start (copies overlapping cond_emb cols, zeros new heightmap cols)
 
 **STEP 12 DONE (2026-09-02) — collision-guided decoding works. RESULTS §13.**
 `scripts/chaining/collision_guided.py` adds inference-time scene steering (no training). On 20×6
