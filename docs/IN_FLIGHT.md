@@ -3,7 +3,7 @@
 Volatile state that is NOT captured by RESULTS.md: what is running, where things live on the
 boxes, and the next concrete action. **Update or delete this file when its work lands.**
 
-Last updated: 2026-09-12 (heightmap extraction + transformer conditioning for seat-height). Steps 1-13 done.
+Last updated: 2026-09-12 (from-scratch scene-grounded tokenizer training on H3D+HUMANISE+TRUMANS). Steps 1-13 done.
 Best interaction model `~/wander_data/step11/checkpoints/action` (`cond_mode=full_action`); best navigation
 model with scene-awareness `~/wander_data/pathb/checkpoints/pv_2000` (`cond_mode=full`, greedy avoids
 obstacles — ablation-confirmed); finetuned VQ-VAE
@@ -111,9 +111,34 @@ furniture (sofa/chair/bed). Reuses `scripts/chaining/{demo_interaction,rollout}.
 This is a legitimate planner-side fix (no GT peek, no motion-model tuning). **[DONE — narrow/low-yield,
 see the sit-orientation section. Step 12 is now also DONE, see the banner above.]**
 
+**→ CURRENT (2026-09-12): FROM-SCRATCH SCENE-GROUNDED TOKENIZER on H3D + HUMANISE + TRUMANS.**
+The previous approaches (frozen decoder §12, unfrozen §12) both hit the REDUNDANCY TRAP: the existing
+codebook already encodes contact height, so the heightmap was ignored at generation. The fix is the
+SceMoS path: train the VQ-VAE from the BASE T2M-GPT checkpoint (not the finetuned one) with the
+heightmap from the start, so the codebook never learns absolute contact height — the heightmap provides
+it. Three-source balanced training: ~1/3 H3D (locomotion quality) + ~1/3 HUMANISE (interaction) +
+~1/3 TRUMANS (seat-height variety, σ=0.108 m). Shift-consistency weight 0.5 (was 0.25 in §12 — need
+stronger invariance). After training: re-extract tokens → retrain transformer → new demo.
+
+Training: `~/wander_data/scene_tokenizer_v2/checkpoints/scene_vqvae_scratch/` on ntx (4090).
+`train_scene_vqvae.py --from-scratch --base-vqvae <base_t2m_gpt> --consist-weight 0.5 --height-aug 0.6
+--total-iter 30000 --batch-size 192 --seed 42`. Three-source loader: `BalancedThreeSourceHMLoader`
+(scene_joint_dataset.py). Monitor: heartbeat.log / `pgrep -f train_scene_vqvae`.
+
+Cascade after VQ-VAE converges:
+1. Re-extract tokens: `reextract_tokens.py --scene-vqvae <best_ckpt> --base-vqvae <base_t2m_gpt>`
+   on the combined HUMANISE+TRUMANS manifest
+2. Retrain transformer: `train_probe.py --cond-mode full_action ...` on the new tokens
+3. Demo: `render_mesh_demo.py --mode interaction` with the new model
+
 ---
 
-## Nothing is training right now. (An eval may be running — check.)
+## VQ-VAE training in progress on ntx (4090). Check:
+
+```
+pgrep -af "[t]rain_scene_vqvae"; nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv,noheader
+cat ~/wander_data/scene_tokenizer_v2/checkpoints/scene_vqvae_scratch/heartbeat.log | tail -5
+```
 
 ```
 ssh train-3090 'pgrep -af "[t]rain_probe.py|[d]emo_interaction|[e]val_"; nvidia-smi --query-gpu=memory.used --format=csv,noheader'

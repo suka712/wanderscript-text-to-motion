@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Stage A' -- finetune the geometry-grounded (heightmap-conditioned) VQ-VAE (SceMoS port).
+"""Stage A' -- train/finetune the geometry-grounded (heightmap-conditioned) VQ-VAE (SceMoS port).
 
-Warm-starts from the scene-BLIND finetuned tokenizer (track2 net_iter020000.pth, RESULTS §3) and
-wraps it in SceneVQVAE (src/scene_vqvae.py): encoder+quantizer untouched, a per-frame local
-heightmap fused into the decoder input (identity-init so recon == the warm-start at iter 0). Adds
-a penetration loss (src/contact_loss.py). Trained jointly on H3D (flat-floor heightmap) + HUMANISE
-(real per-frame heightmap), balanced, same recons/commit/vel recipe as the scene-blind finetune.
+Two modes controlled by --from-scratch:
+  DEFAULT (finetune): warm-starts from the scene-BLIND finetuned tokenizer (track2 net_iter020000)
+    and wraps it in SceneVQVAE. The previous approach — hit the redundancy trap (RESULTS §12):
+    the existing codebook already encodes contact height, so the heightmap was ignored at generation.
+  --from-scratch: warm-starts from the BASE T2M-GPT VQ-VAE (pre-finetune), training the codebook
+    with the heightmap from the start on H3D + HUMANISE + TRUMANS combined. The heightmap is an
+    input from day 1, so the codebook should NOT learn to encode absolute contact height — the
+    heightmap provides it. TRUMANS adds the seat-height variety HUMANISE lacks (σ=0.108, range
+    0.38–0.85 m). This is the SceMoS path: the tokenizer is scene-grounded from the start.
 
-Gate (Stage A'): per-category MPJPE must not regress AND the counterfactual follow-ratio (does the
-decoded pelvis track a raised surface?) must be clearly > 0 -- the mechanism the scene-blind
-tokenizer cannot have. Eval via eval_scene_tokenizer.run_scene_eval.
+SceneVQVAE (src/scene_vqvae.py): encoder+quantizer+decoder+heightmap pathway all train. Between
+quantize and decode, a per-frame local heightmap embedding is fused into the latent. A shift-
+consistency loss forces the encoder to be vertical-shift invariant (tokens carry no absolute
+contact height). Adds a penetration loss (src/contact_loss.py). Trained jointly on H3D (flat-floor
+heightmap) + HUMANISE (real heightmap) + TRUMANS (real heightmap), balanced.
 
-Two param groups: the pretrained base gets a low LR (don't wreck the converged codebook/decoder),
-the NEW heightmap pathway (hm_encoder + fusion) a higher LR so it can learn to use the heightmap.
+Gate: per-category MPJPE must not regress AND the counterfactual follow-ratio (does the decoded
+pelvis track a raised surface?) must be clearly > 0. Eval via eval_scene_tokenizer.run_scene_eval.
 """
 import argparse
 import json
@@ -53,6 +59,10 @@ def build_args():
     ap.add_argument("--out-dir", default=os.path.expanduser("~/wander_data/scene_tokenizer/checkpoints"))
     ap.add_argument("--base-vqvae", default=os.path.expanduser(
         "~/wander_data/motion_data/track2_checkpoints/net_iter020000.pth"))
+    ap.add_argument("--from-scratch", action="store_true",
+                    help="warm-start from the BASE T2M-GPT VQ-VAE (not the finetuned one) "
+                         "and train with TRUMANS. The codebook learns with the heightmap from "
+                         "the start, so it should NOT encode absolute contact height.")
     ap.add_argument("--batch-size", type=int, default=192)
     ap.add_argument("--window-size", type=int, default=64)
     ap.add_argument("--h3d-frac", type=float, default=0.5)
@@ -107,13 +117,26 @@ def main():
     h3d_motions, h3d_stats = jd.load_h3d_split("train", window_size=args.window_size)
     print("Loading HUMANISE train split (263 + heightmaps)...")
     hum_motions, hum_hms, hum_stats = sjd.load_humanise_split_with_hm("train", window_size=args.window_size)
-    hb.write(f"data loaded h3d={h3d_stats} humanise={hum_stats}")
 
     h3d_ds = sjd.HMWindowDataset(h3d_motions, None, mean, std, window_size=args.window_size)
     hum_ds = sjd.HMWindowDataset(hum_motions, hum_hms, mean, std, window_size=args.window_size)
-    loader = sjd.BalancedJointHMLoader(h3d_ds, hum_ds, batch_size=args.batch_size,
-                                       h3d_frac=args.h3d_frac, num_workers=args.num_workers,
-                                       seed=args.seed)
+
+    if args.from_scratch:
+        print("Loading TRUMANS (263 + heightmaps) — from-scratch three-source training...")
+        tru_motions, tru_hms, tru_stats = sjd.load_trumans_with_hm(window_size=args.window_size)
+        hb.write(f"data loaded h3d={h3d_stats} humanise={hum_stats} trumans={tru_stats}")
+        tru_ds = sjd.HMWindowDataset(tru_motions, tru_hms, mean, std, window_size=args.window_size)
+        # ~1/3 each: H3D keeps locomotion quality, HUMANISE has interaction, TRUMANS adds
+        # seat-height variety. TRUMANS is smaller (6200 vs 16k HUMANISE) but infinite cycling
+        # means each epoch draws proportionally regardless of source size.
+        loader = sjd.BalancedThreeSourceHMLoader(
+            h3d_ds, hum_ds, tru_ds, batch_size=args.batch_size,
+            h3d_frac=0.34, hum_frac=0.33, num_workers=args.num_workers, seed=args.seed)
+    else:
+        hb.write(f"data loaded h3d={h3d_stats} humanise={hum_stats}")
+        loader = sjd.BalancedJointHMLoader(h3d_ds, hum_ds, batch_size=args.batch_size,
+                                           h3d_frac=args.h3d_frac, num_workers=args.num_workers,
+                                           seed=args.seed)
     loader_iter = iter(loader)
 
     base = load_vqvae(ckpt_path=args.base_vqvae, device=DEVICE)
