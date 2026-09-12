@@ -7,42 +7,40 @@ Last updated: 2026-09-12.
 
 ---
 
-## Current: from-scratch scene-grounded VQ-VAE (ntx 4090)
+## From-scratch scene-grounded VQ-VAE — DONE (2026-09-12)
 
-Training a heightmap-conditioned VQ-VAE from the BASE T2M-GPT checkpoint (not the finetuned
-one) on three balanced sources. This breaks the **redundancy trap**: when the codebook is
-pre-trained without a heightmap, it encodes contact height, and adding the heightmap later
-(frozen decoder, unfrozen encoder, or transformer-side) is always ignored at generation because
-the token already carries the answer. Training from scratch means the codebook learns WITH the
-heightmap and never encodes absolute contact height.
+Trained a heightmap-conditioned VQ-VAE from the BASE T2M-GPT checkpoint on three balanced
+sources (H3D/HUMANISE/TRUMANS). Breaks the **redundancy trap**: codebook learned WITH the
+heightmap from the start, so it never encodes absolute contact height.
 
-**Config:** `~/wander_data/scene_tokenizer_v2/checkpoints/scene_vqvae_scratch/`
-- 30k iters, batch 192, consist_weight 0.5, height_aug 0.6, seed 42
-- Three-source balanced: H3D 34% / HUMANISE 33% / TRUMANS 33%
-- Base VQ-VAE: `pretrained/VQVAE/net_best_fid.pth`
-- Script: `train_scene_vqvae.py --from-scratch`
-- Loader: `BalancedThreeSourceHMLoader` (`src/scene_joint_dataset.py`)
+**Results:** follow_ratio 0.98 (sit) / 0.92 (lie) at convergence — the decoder reads the
+heightmap. MPJPE: h3d 63, walk 42, sit 71, lie 99 mm. Full cascade completed:
 
-**Monitor:**
+| Step | Checkpoint |
+|---|---|
+| VQ-VAE (30k iters) | `scene_tokenizer_v2/checkpoints/scene_vqvae_scratch/net_iter030000.pth` |
+| Re-extracted tokens (21,832 clips) | `scene_tokenizer_v2/tokens/{train,test}.pkl` |
+| Transformer (20k iters, 90.8% acc) | `scene_tokenizer_v2/checkpoints/action_scratch/net_final.pth` |
+| Demo (scene0380, SAT&STOOD) | `scene_tokenizer_v2/demo/mesh_interaction_scene0380_00_0.mp4` |
+
+**Next:** evaluate whether sit height now tracks furniture at generation (the whole point).
+Run `eval_seat_height.py` or `eval_contact_demo.py` on the new model to measure
+corr(seat_height, pelvis_height) — should exceed the §12 plateau if the trap is truly broken.
+
+**Reproduce cascade:**
 ```bash
-pgrep -af "[t]rain_scene_vqvae"
-nvidia-smi --query-compute-apps=pid,name,used_memory --format=csv,noheader
-tail -5 ~/wander_data/scene_tokenizer_v2/checkpoints/scene_vqvae_scratch/heartbeat.log
+# 1. VQ-VAE
+train_scene_vqvae.py --from-scratch --base-vqvae <base> --consist-weight 0.5 --height-aug 0.6 --total-iter 30000 --batch-size 192
+# 2. Re-extract
+reextract_tokens.py --scene-vqvae <ckpt> --base-vqvae <base> --src-tokens ~/wander_data/trumans_combined_tokens --out <out>
+# 3. Transformer
+train_probe.py --conditioned --cond-mode full_action --iters 20000 --goal-aug 0.5 --walk-prefix-aug 0.5 --tokens-dir <tokens> --out-name action_scratch
+# 4. Demo
+render_mesh_demo.py --mode interaction --ckpt <transformer_dir> --vqvae-ckpt <base> --scene-vqvae <scene_vqvae_ckpt> --out <dir>
 ```
-
-**What to watch:** shift-invariance should exceed 0.72 (§12's plateau at consist_weight=0.25).
-If seat-height correlation drops at convergence, the codebook is still encoding height.
 
 **Wait-loop gotcha:** `while pgrep -f foo.py; do sleep 60; done` never exits — pgrep matches
 its own command line. Use `pgrep -f "[f]oo.py"` or poll a log sentinel.
-
----
-
-## Cascade after VQ-VAE converges
-
-1. **Re-extract tokens**: `reextract_tokens.py --scene-vqvae <best_ckpt> --base-vqvae <base>`
-2. **Retrain transformer**: `train_probe.py --cond-mode full_action` on new tokens
-3. **Demo**: `render_mesh_demo.py --mode interaction`
 
 ---
 
@@ -51,8 +49,10 @@ its own command line. Use `pgrep -f "[f]oo.py"` or poll a log sentinel.
 | path | what |
 |---|---|
 | `~/wander_data/step11/checkpoints/action` | Best interaction model (`full_action`) |
+| `~/wander_data/scene_tokenizer_v2/checkpoints/action_scratch` | Scene-grounded interaction model |
+| `~/wander_data/scene_tokenizer_v2/checkpoints/scene_vqvae_scratch/net_iter030000.pth` | From-scratch SceneVQVAE |
+| `~/wander_data/scene_tokenizer_v2/tokens/` | Tokens from from-scratch SceneVQVAE |
 | `~/wander_data/step10/checkpoints/goalaug` | Best navigation model |
-| `~/wander_data/pathb/checkpoints/pv_2000` | Best scene-aware navigation (`full`, greedy avoids obstacles) |
 | `/media/user/2tb/motion_data/track2_checkpoints/.../net_iter020000.pth` | Finetuned VQ-VAE |
 | `~/wander_data/trumans_combined_tokens/train.pkl` | Combined manifest (21,832 clips) |
 | `/media/user/2tb/motion_data/TRUMANS_processed/trumans_263_cache` | TRUMANS 263 cache |
